@@ -114,6 +114,12 @@ CORS_ALLOWED_ORIGINS = config(
 )
 CORS_ALLOW_CREDENTIALS = True
 
+CSRF_TRUSTED_ORIGINS = config(
+    'CSRF_TRUSTED_ORIGINS',
+    default='http://localhost:8000',
+    cast=Csv(),
+)
+
 # ─── Security headers ────────────────────────────────────────────────────────
 # Always-on headers (safe even without HTTPS)
 SECURE_BROWSER_XSS_FILTER  = True
@@ -126,9 +132,9 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 # Enable SECURE_SSL_REDIRECT only if nginx is NOT handling the redirect
 SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=False, cast=bool)
 
-# Secure cookies — True in production (DEBUG=False), False in local dev
-SESSION_COOKIE_SECURE = not DEBUG
-CSRF_COOKIE_SECURE    = not DEBUG
+# Secure cookies — only enable once HTTPS is configured
+SESSION_COOKIE_SECURE = config('SESSION_COOKIE_SECURE', default=False, cast=bool)
+CSRF_COOKIE_SECURE    = config('CSRF_COOKIE_SECURE', default=False, cast=bool)
 
 # HSTS — set SECURE_HSTS_SECONDS=31536000 in .env once the site is stable on HTTPS
 SECURE_HSTS_SECONDS             = config('SECURE_HSTS_SECONDS', default=0, cast=int)

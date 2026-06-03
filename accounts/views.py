@@ -1,8 +1,10 @@
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import TokenError
 from django.shortcuts import get_object_or_404
 
 from .models import Service, Invoice, ContactMessage
@@ -11,6 +13,10 @@ from .serializers import (
     ChangePasswordSerializer, ServiceSerializer, InvoiceSerializer,
     ServiceRequestSerializer, ContactMessageSerializer,
 )
+
+
+class AuthThrottle(AnonRateThrottle):
+    scope = 'auth'
 
 
 def get_tokens(user):
@@ -22,6 +28,7 @@ def get_tokens(user):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([AuthThrottle])
 def register(request):
     s = RegisterSerializer(data=request.data)
     if s.is_valid():
@@ -35,6 +42,7 @@ def register(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([AuthThrottle])
 def login(request):
     s = LoginSerializer(data=request.data)
     if s.is_valid():
@@ -52,8 +60,8 @@ def login(request):
 def logout(request):
     try:
         RefreshToken(request.data.get('refresh')).blacklist()
-    except Exception:
-        pass
+    except TokenError:
+        return Response({'error': 'Invalid or already-expired token.'}, status=status.HTTP_400_BAD_REQUEST)
     return Response({'message': 'Logged out successfully.'})
 
 

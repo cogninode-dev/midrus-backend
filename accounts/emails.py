@@ -49,6 +49,30 @@ def send_otp_email(user, otp: str) -> None:
     )
 
 
+def send_login_otp_email(user, otp: str) -> None:
+    body = f"""
+    <h2 style="color:#1A1A2E;font-size:20px;font-weight:700;margin:0 0 12px;">Login Verification</h2>
+    <p style="color:#6b7280;font-size:15px;line-height:1.6;margin:0 0 24px;">
+      Hi {user.name}, use the OTP below to complete your sign-in.
+      It expires in <strong>10 minutes</strong>.
+    </p>
+    <div style="background:#f9fafb;border:2px dashed #e5e7eb;border-radius:12px;padding:24px;text-align:center;margin:0 0 24px;">
+      <p style="color:#9ca3af;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin:0 0 8px;">Your OTP</p>
+      <p style="color:#1A1A2E;font-size:42px;font-weight:800;letter-spacing:14px;margin:0;">{otp}</p>
+    </div>
+    <p style="color:#9ca3af;font-size:13px;margin:0;">
+      If you didn't attempt to log in, please ignore this email and your account remains secure.
+    </p>"""
+    send_mail(
+        subject='MIDRUS login OTP',
+        message=f'Your MIDRUS login OTP is: {otp}\n\nIt expires in 10 minutes.',
+        html_message=_base(body),
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[user.email],
+        fail_silently=False,
+    )
+
+
 def send_pending_email(user) -> None:
     body = f"""
     <p style="font-size:28px;margin:0 0 16px;">⏳</p>

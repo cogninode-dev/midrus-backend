@@ -11,9 +11,10 @@ from .models import Service, Invoice, ContactMessage
 from .serializers import (
     RegisterSerializer, LoginSerializer, UserSerializer,
     ChangePasswordSerializer, ServiceSerializer, InvoiceSerializer,
-    ServiceRequestSerializer, ContactMessageSerializer, VerifyEmailSerializer,
+    ServiceRequestSerializer, ContactMessageSerializer,
+    VerifyEmailSerializer, VerifyLoginOTPSerializer,
 )
-from .emails import generate_otp, send_otp_email, send_pending_email
+from .emails import generate_otp, send_otp_email, send_pending_email, send_login_otp_email
 
 
 class AuthThrottle(AnonRateThrottle):
@@ -87,14 +88,51 @@ def resend_otp(request):
 @throttle_classes([AuthThrottle])
 def login(request):
     s = LoginSerializer(data=request.data)
-    if s.is_valid():
-        user = s.validated_data['user']
-        return Response({
-            'message': 'Login successful.',
-            'user': UserSerializer(user).data,
-            'tokens': get_tokens(user),
-        })
-    return Response(s.errors, status=status.HTTP_401_UNAUTHORIZED)
+    if not s.is_valid():
+        return Response(s.errors, status=status.HTTP_401_UNAUTHORIZED)
+    user = s.validated_data['user']
+    try:
+        otp = generate_otp(user)
+        send_login_otp_email(user, otp)
+    except Exception:
+        return Response(
+            {'error': 'Failed to send OTP email. Please try again.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+    return Response({'otp_required': True})
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([AuthThrottle])
+def verify_login_otp(request):
+    s = VerifyLoginOTPSerializer(data=request.data)
+    if not s.is_valid():
+        return Response(s.errors, status=status.HTTP_401_UNAUTHORIZED)
+    user = s.validated_data['user']
+    return Response({
+        'message': 'Login successful.',
+        'user': UserSerializer(user).data,
+        'tokens': get_tokens(user),
+    })
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([AuthThrottle])
+def resend_login_otp(request):
+    from .models import User
+    email = request.data.get('email', '').strip()
+    try:
+        user = User.objects.get(email=email, is_active=True, is_email_verified=True)
+    except User.DoesNotExist:
+        return Response({'message': 'If an account exists, a new OTP has been sent.'})
+    try:
+        otp = generate_otp(user)
+        send_login_otp_email(user, otp)
+    except Exception:
+        return Response({'error': 'Failed to send email. Please try again.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    return Response({'message': 'New OTP sent to your email.'})
 
 
 @api_view(['POST'])

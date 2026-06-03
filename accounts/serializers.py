@@ -107,6 +107,32 @@ class ContactMessageSerializer(serializers.ModelSerializer):
         fields = ['name', 'email', 'message']
 
 
+class VerifyLoginOTPSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    otp   = serializers.CharField(max_length=6)
+
+    def validate(self, data):
+        try:
+            user = User.objects.get(email=data['email'], is_active=True, is_email_verified=True)
+        except User.DoesNotExist:
+            raise serializers.ValidationError('Invalid credentials.')
+
+        try:
+            otp_obj = EmailOTP.objects.filter(
+                user=user, otp=data['otp'], is_used=False
+            ).latest('created_at')
+        except EmailOTP.DoesNotExist:
+            raise serializers.ValidationError('Invalid OTP.')
+
+        if not otp_obj.is_valid():
+            raise serializers.ValidationError('OTP has expired. Please request a new one.')
+
+        otp_obj.is_used = True
+        otp_obj.save()
+        data['user'] = user
+        return data
+
+
 class VerifyEmailSerializer(serializers.Serializer):
     email = serializers.EmailField()
     otp   = serializers.CharField(max_length=6)

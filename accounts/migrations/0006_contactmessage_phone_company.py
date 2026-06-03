@@ -11,7 +11,8 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='contactmessage',
             name='phone',
-            field=models.CharField(blank=True, max_length=20),
+            field=models.CharField(max_length=20, default=''),
+            preserve_default=False,
         ),
         migrations.AddField(
             model_name='contactmessage',

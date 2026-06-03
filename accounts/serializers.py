@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import authenticate
-from .models import User, Service, Invoice, ContactMessage
+from .models import User, Service, Invoice, ContactMessage, EmailOTP
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -16,8 +16,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        # New users are inactive until admin approves
-        return User.objects.create_user(is_active=False, **validated_data)
+        return User.objects.create_user(is_active=False, is_email_verified=False, **validated_data)
 
 
 class LoginSerializer(serializers.Serializer):
@@ -33,6 +32,11 @@ class LoginSerializer(serializers.Serializer):
 
         if not user.check_password(data['password']):
             raise serializers.ValidationError('Invalid email or password.')
+
+        if not user.is_email_verified:
+            raise serializers.ValidationError(
+                'Please verify your email first. Enter the OTP sent to your inbox.'
+            )
 
         if not user.is_active:
             raise serializers.ValidationError(
@@ -101,3 +105,32 @@ class ContactMessageSerializer(serializers.ModelSerializer):
     class Meta:
         model  = ContactMessage
         fields = ['name', 'email', 'message']
+
+
+class VerifyEmailSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    otp   = serializers.CharField(max_length=6)
+
+    def validate(self, data):
+        try:
+            user = User.objects.get(email=data['email'])
+        except User.DoesNotExist:
+            raise serializers.ValidationError('No account found with this email.')
+
+        if user.is_email_verified:
+            raise serializers.ValidationError('Email is already verified.')
+
+        try:
+            otp_obj = EmailOTP.objects.filter(
+                user=user, otp=data['otp'], is_used=False
+            ).latest('created_at')
+        except EmailOTP.DoesNotExist:
+            raise serializers.ValidationError('Invalid OTP.')
+
+        if not otp_obj.is_valid():
+            raise serializers.ValidationError('OTP has expired. Please request a new one.')
+
+        otp_obj.is_used = True
+        otp_obj.save()
+        data['user'] = user
+        return data

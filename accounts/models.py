@@ -27,8 +27,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     website     = models.URLField(blank=True)
     tax_id      = models.CharField(max_length=50, blank=True)
     gst_number  = models.CharField(max_length=50, blank=True)
-    is_active   = models.BooleanField(default=True)
-    is_staff    = models.BooleanField(default=False)
+    is_active          = models.BooleanField(default=True)
+    is_staff           = models.BooleanField(default=False)
+    is_email_verified  = models.BooleanField(default=True)  # False for new API registrations
     created_at  = models.DateTimeField(auto_now_add=True)
     updated_at  = models.DateTimeField(auto_now=True)
 
@@ -43,6 +44,24 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return f'{self.name} ({self.email})'
+
+
+class EmailOTP(models.Model):
+    user       = models.ForeignKey(User, on_delete=models.CASCADE, related_name='otps')
+    otp        = models.CharField(max_length=6)
+    is_used    = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'email_otps'
+        ordering = ['-created_at']
+
+    def is_valid(self):
+        from django.utils import timezone
+        return not self.is_used and (timezone.now() - self.created_at).total_seconds() < 600
+
+    def __str__(self):
+        return f'OTP for {self.user.email}'
 
 
 class Service(models.Model):

@@ -3,6 +3,7 @@ from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.html import format_html, mark_safe
 from django.contrib import messages
 from .models import User, Service, Invoice, ContactMessage
+from .emails import send_approved_email
 
 admin.site.site_header = 'MIDRUS Administration'
 admin.site.site_title  = 'MIDRUS Admin'
@@ -66,8 +67,11 @@ class UserAdmin(BaseUserAdmin):
 
     @admin.action(description='✔ Approve selected users')
     def approve_users(self, request, queryset):
+        to_approve = list(queryset.filter(is_active=False))
         updated = queryset.filter(is_active=False).update(is_active=True)
-        self.message_user(request, f'{updated} user(s) approved successfully.', messages.SUCCESS)
+        for user in to_approve:
+            send_approved_email(user)
+        self.message_user(request, f'{updated} user(s) approved and notified by email.', messages.SUCCESS)
 
     @admin.action(description='✖ Deactivate selected users')
     def deactivate_users(self, request, queryset):

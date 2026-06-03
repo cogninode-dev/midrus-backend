@@ -11,8 +11,9 @@ from .models import Service, Invoice, ContactMessage
 from .serializers import (
     RegisterSerializer, LoginSerializer, UserSerializer,
     ChangePasswordSerializer, ServiceSerializer, InvoiceSerializer,
-    ServiceRequestSerializer, ContactMessageSerializer,
+    ServiceRequestSerializer, ContactMessageSerializer, VerifyEmailSerializer,
 )
+from .emails import generate_otp, send_otp_email, send_pending_email
 
 
 class AuthThrottle(AnonRateThrottle):
@@ -31,13 +32,54 @@ def get_tokens(user):
 @throttle_classes([AuthThrottle])
 def register(request):
     s = RegisterSerializer(data=request.data)
-    if s.is_valid():
-        s.save()
-        return Response({
-            'pending': True,
-            'message': 'Account created. Awaiting admin approval before you can log in.',
-        }, status=status.HTTP_201_CREATED)
-    return Response(s.errors, status=status.HTTP_400_BAD_REQUEST)
+    if not s.is_valid():
+        return Response(s.errors, status=status.HTTP_400_BAD_REQUEST)
+    user = s.save()
+    try:
+        otp = generate_otp(user)
+        send_otp_email(user, otp)
+    except Exception:
+        user.delete()
+        return Response(
+            {'error': 'Failed to send verification email. Please try again.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+    return Response({'otp_required': True}, status=status.HTTP_201_CREATED)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([AuthThrottle])
+def verify_email(request):
+    s = VerifyEmailSerializer(data=request.data)
+    if not s.is_valid():
+        return Response(s.errors, status=status.HTTP_400_BAD_REQUEST)
+    user = s.validated_data['user']
+    user.is_email_verified = True
+    user.save()
+    send_pending_email(user)
+    return Response({
+        'pending': True,
+        'message': 'Email verified. Your account is pending admin approval.',
+    })
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([AuthThrottle])
+def resend_otp(request):
+    from .models import User
+    email = request.data.get('email', '').strip()
+    try:
+        user = User.objects.get(email=email, is_email_verified=False)
+    except User.DoesNotExist:
+        return Response({'error': 'No unverified account found with this email.'}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        otp = generate_otp(user)
+        send_otp_email(user, otp)
+    except Exception:
+        return Response({'error': 'Failed to send email. Please try again.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    return Response({'message': 'New OTP sent to your email.'})
 
 
 @api_view(['POST'])

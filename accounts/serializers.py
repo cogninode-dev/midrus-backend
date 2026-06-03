@@ -104,7 +104,7 @@ class ServiceRequestSerializer(serializers.ModelSerializer):
 class ContactMessageSerializer(serializers.ModelSerializer):
     class Meta:
         model  = ContactMessage
-        fields = ['name', 'email', 'message']
+        fields = ['name', 'email', 'phone', 'company', 'message']
 
 
 class VerifyLoginOTPSerializer(serializers.Serializer):

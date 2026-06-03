@@ -136,15 +136,15 @@ class InvoiceAdmin(admin.ModelAdmin):
 
 @admin.register(ContactMessage)
 class ContactMessageAdmin(admin.ModelAdmin):
-    list_display   = ['name', 'email', 'short_message', 'read_status', 'submitted_at']
+    list_display   = ['name', 'email', 'phone', 'company', 'short_message', 'read_status', 'submitted_at']
     list_filter    = ['is_read', 'submitted_at']
-    search_fields  = ['name', 'email', 'message']
+    search_fields  = ['name', 'email', 'phone', 'company', 'message']
     ordering       = ['-submitted_at']
-    readonly_fields = ['name', 'email', 'message', 'submitted_at']
+    readonly_fields = ['name', 'email', 'phone', 'company', 'message', 'submitted_at']
     actions        = ['mark_read', 'mark_unread']
 
     fieldsets = (
-        ('Contact Details', {'fields': ('name', 'email', 'submitted_at')}),
+        ('Contact Details', {'fields': ('name', 'email', 'phone', 'company', 'submitted_at')}),
         ('Message',         {'fields': ('message', 'is_read')}),
     )
 

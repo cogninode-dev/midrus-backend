@@ -37,18 +37,18 @@ class ServiceInline(admin.TabularInline):
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     list_display    = ['email', 'name', 'company', 'phone', 'approval_status', 'is_staff', 'created_at']
-    list_filter     = ['is_active', 'is_staff', 'created_at']
+    list_filter     = ['is_approved', 'is_active', 'is_staff', 'created_at']
     search_fields   = ['email', 'name', 'phone', 'company']
-    ordering        = ['is_active', '-created_at']
+    ordering        = ['is_approved', '-created_at']
     readonly_fields = ['created_at', 'updated_at']
     inlines         = [ServiceInline]
-    actions         = ['approve_users', 'deactivate_users']
+    actions         = ['approve_users', 'revoke_approval']
 
     fieldsets = (
         ('Login',        {'fields': ('email', 'password')}),
         ('Personal',     {'fields': ('name', 'phone', 'company', 'address', 'website')}),
         ('Tax & Legal',  {'fields': ('tax_id', 'gst_number')}),
-        ('Permissions',  {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions'), 'classes': ('collapse',)}),
+        ('Permissions',  {'fields': ('is_approved', 'is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions'), 'classes': ('collapse',)}),
         ('Timestamps',   {'fields': ('created_at', 'updated_at'), 'classes': ('collapse',)}),
     )
 
@@ -61,22 +61,24 @@ class UserAdmin(BaseUserAdmin):
 
     @admin.display(description='Status')
     def approval_status(self, obj):
-        if obj.is_active:
+        if obj.is_approved:
             return mark_safe('<span style="color:green;font-weight:600">&#10004; Approved</span>')
+        if not obj.is_email_verified:
+            return mark_safe('<span style="color:#aaa;font-weight:600">&#9711; Unverified</span>')
         return mark_safe('<span style="color:orange;font-weight:600">&#9203; Pending Approval</span>')
 
-    @admin.action(description='✔ Approve selected users')
+    @admin.action(description='✔ Approve selected users (grant service access)')
     def approve_users(self, request, queryset):
-        to_approve = list(queryset.filter(is_active=False))
-        updated = queryset.filter(is_active=False).update(is_active=True)
+        to_approve = list(queryset.filter(is_approved=False, is_email_verified=True))
+        updated = queryset.filter(is_approved=False, is_email_verified=True).update(is_approved=True)
         for user in to_approve:
             send_approved_email(user)
         self.message_user(request, f'{updated} user(s) approved and notified by email.', messages.SUCCESS)
 
-    @admin.action(description='✖ Deactivate selected users')
-    def deactivate_users(self, request, queryset):
-        updated = queryset.filter(is_active=True, is_staff=False).update(is_active=False)
-        self.message_user(request, f'{updated} user(s) deactivated.', messages.WARNING)
+    @admin.action(description='✖ Revoke approval (restrict service requests)')
+    def revoke_approval(self, request, queryset):
+        updated = queryset.filter(is_approved=True, is_staff=False).update(is_approved=False)
+        self.message_user(request, f'{updated} user(s) approval revoked.', messages.WARNING)
 
 
 @admin.register(Service)

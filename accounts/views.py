@@ -14,7 +14,7 @@ from .serializers import (
     ServiceRequestSerializer, ContactMessageSerializer,
     VerifyEmailSerializer, VerifyLoginOTPSerializer,
 )
-from .emails import generate_otp, send_otp_email, send_pending_email, send_login_otp_email
+from .emails import generate_otp, send_otp_email, send_pending_email, send_login_otp_email, send_admin_signup_notification
 
 
 class AuthThrottle(AnonRateThrottle):
@@ -58,10 +58,16 @@ def verify_email(request):
     user = s.validated_data['user']
     user.is_email_verified = True
     user.save()
-    send_pending_email(user)
+    # Notify admin of new signup (non-blocking)
+    try:
+        send_admin_signup_notification(user)
+    except Exception:
+        pass
+    # Log user in immediately — return tokens so they reach the dashboard now
     return Response({
-        'pending': True,
-        'message': 'Email verified. Your account is pending admin approval.',
+        'message': 'Email verified successfully.',
+        'user': UserSerializer(user).data,
+        'tokens': get_tokens(user),
     })
 
 
@@ -205,6 +211,11 @@ def service_detail(request, pk):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def service_request(request):
+    if not request.user.is_approved:
+        return Response(
+            {'error': 'Your account is pending admin approval. You will be notified once approved.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
     s = ServiceRequestSerializer(data=request.data)
     if s.is_valid():
         Service.objects.create(

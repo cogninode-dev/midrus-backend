@@ -16,7 +16,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        return User.objects.create_user(is_active=False, is_email_verified=False, **validated_data)
+        return User.objects.create_user(is_active=True, is_email_verified=False, is_approved=False, **validated_data)
 
 
 class LoginSerializer(serializers.Serializer):
@@ -40,7 +40,7 @@ class LoginSerializer(serializers.Serializer):
 
         if not user.is_active:
             raise serializers.ValidationError(
-                'Your account is pending admin approval. You will be notified once approved.'
+                'Your account has been deactivated. Please contact support.'
             )
 
         data['user'] = user
@@ -53,9 +53,9 @@ class UserSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'email', 'name', 'phone', 'company',
             'address', 'website', 'tax_id', 'gst_number',
-            'created_at', 'updated_at',
+            'is_approved', 'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'email', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'email', 'is_approved', 'created_at', 'updated_at']
 
 
 class ChangePasswordSerializer(serializers.Serializer):

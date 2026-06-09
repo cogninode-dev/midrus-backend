@@ -94,6 +94,42 @@ def send_pending_email(user) -> None:
     )
 
 
+def send_admin_signup_notification(user) -> None:
+    admin_url = f"{settings.FRONTEND_URL.replace('3000', '8000')}/admin/accounts/user/?q={user.email}"
+    body = f"""
+    <p style="font-size:28px;margin:0 0 16px;">🔔</p>
+    <h2 style="color:#1A1A2E;font-size:20px;font-weight:700;margin:0 0 12px;">New User Signed Up</h2>
+    <p style="color:#6b7280;font-size:15px;line-height:1.6;margin:0 0 16px;">
+      A new user has verified their email and is waiting for service request access.
+    </p>
+    <table style="width:100%;border-collapse:collapse;margin:0 0 24px;">
+      <tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;font-weight:600;width:30%;color:#374151;">Name</td>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#111827;">{user.name}</td></tr>
+      <tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;font-weight:600;color:#374151;">Email</td>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#111827;">{user.email}</td></tr>
+      <tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;font-weight:600;color:#374151;">Company</td>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#111827;">{user.company or '—'}</td></tr>
+      <tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;font-weight:600;color:#374151;">Phone</td>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#111827;">{user.phone or '—'}</td></tr>
+    </table>
+    <a href="{admin_url}"
+       style="display:inline-block;background:#1A1A2E;color:#fff;text-decoration:none;
+              padding:14px 32px;border-radius:8px;font-weight:700;font-size:15px;">
+      Review &amp; Approve in Admin →
+    </a>"""
+    admin_email = getattr(settings, 'ADMIN_EMAIL', settings.EMAIL_HOST_USER)
+    if not admin_email:
+        return
+    send_mail(
+        subject=f'MIDRUS — New signup: {user.name} ({user.email})',
+        message=f'New user signed up: {user.name} ({user.email}). Review in admin panel.',
+        html_message=_base(body),
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[admin_email],
+        fail_silently=True,
+    )
+
+
 def send_approved_email(user) -> None:
     login_url = f"{settings.FRONTEND_URL}/login"
     body = f"""

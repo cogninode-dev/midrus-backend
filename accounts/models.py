@@ -29,7 +29,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     gst_number  = models.CharField(max_length=50, blank=True)
     is_active          = models.BooleanField(default=True)
     is_staff           = models.BooleanField(default=False)
-    is_email_verified  = models.BooleanField(default=True)  # False for new API registrations
+    is_email_verified  = models.BooleanField(default=False)
+    is_approved        = models.BooleanField(default=False)  # admin approves service request access
     created_at  = models.DateTimeField(auto_now_add=True)
     updated_at  = models.DateTimeField(auto_now=True)
 

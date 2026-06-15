@@ -2,19 +2,28 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
-from rest_framework.throttling import AnonRateThrottle
+import logging
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
+
+logger = logging.getLogger(__name__)
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from django.shortcuts import get_object_or_404
 
-from .models import Service, Invoice, ContactMessage
+from .models import User, Service, ServiceDocument, ContactMessage, Invoice
 from .serializers import (
     RegisterSerializer, LoginSerializer, UserSerializer,
     ChangePasswordSerializer, ServiceSerializer, InvoiceSerializer,
     ServiceRequestSerializer, ContactMessageSerializer,
     VerifyEmailSerializer, VerifyLoginOTPSerializer,
+    BillingInvoiceSerializer,
+    PasswordResetRequestSerializer, PasswordResetConfirmSerializer,
 )
-from .emails import generate_otp, send_otp_email, send_pending_email, send_login_otp_email, send_admin_signup_notification
+from .emails import (
+    generate_otp, send_otp_email,
+    send_login_otp_email, send_admin_signup_notification,
+    send_password_reset_email,
+)
 
 
 class AuthThrottle(AnonRateThrottle):
@@ -39,7 +48,8 @@ def register(request):
     try:
         otp = generate_otp(user)
         send_otp_email(user, otp)
-    except Exception:
+    except Exception as exc:
+        logger.error('Failed to send verification OTP to %s: %s', user.email, exc)
         user.delete()
         return Response(
             {'error': 'Failed to send verification email. Please try again.'},
@@ -61,8 +71,8 @@ def verify_email(request):
     # Notify admin of new signup (non-blocking)
     try:
         send_admin_signup_notification(user)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning('Admin signup notification failed for %s: %s', user.email, exc)
     # Log user in immediately — return tokens so they reach the dashboard now
     return Response({
         'message': 'Email verified successfully.',
@@ -75,7 +85,6 @@ def verify_email(request):
 @permission_classes([AllowAny])
 @throttle_classes([AuthThrottle])
 def resend_otp(request):
-    from .models import User
     email = request.data.get('email', '').strip()
     try:
         user = User.objects.get(email=email, is_email_verified=False)
@@ -127,7 +136,6 @@ def verify_login_otp(request):
 @permission_classes([AllowAny])
 @throttle_classes([AuthThrottle])
 def resend_login_otp(request):
-    from .models import User
     email = request.data.get('email', '').strip()
     try:
         user = User.objects.get(email=email, is_active=True, is_email_verified=True)
@@ -188,7 +196,7 @@ def dashboard_stats(request):
         'total_services':   services.count(),
         'active_services':  services.filter(status='Active').count(),
         'pending_services': services.filter(status__in=['Pending', 'Requested']).count(),
-        'total_invoices':   Invoice.objects.filter(service__user=request.user).count(),
+        'total_invoices':   ServiceDocument.objects.filter(service__user=request.user).count(),
     })
 
 
@@ -233,14 +241,27 @@ def service_request(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+_ALLOWED_MIME_TYPES = {
+    'application/pdf', 'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'image/jpeg', 'image/png',
+}
+_MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
+
 def invoice_add(request, service_pk):
     service = get_object_or_404(Service, pk=service_pk, user=request.user)
     uploaded_file = request.FILES.get('file')
     file_name = (uploaded_file.name if uploaded_file else request.data.get('file_name', '')).strip()
     if not file_name:
         return Response({'error': 'file is required.'}, status=status.HTTP_400_BAD_REQUEST)
-    invoice = Invoice.objects.create(service=service, file_name=file_name, file=uploaded_file)
-    return Response(InvoiceSerializer(invoice, context={'request': request}).data, status=status.HTTP_201_CREATED)
+    if uploaded_file:
+        if uploaded_file.size > _MAX_UPLOAD_BYTES:
+            return Response({'error': 'File too large. Maximum size is 20 MB.'}, status=status.HTTP_400_BAD_REQUEST)
+        if uploaded_file.content_type not in _ALLOWED_MIME_TYPES:
+            return Response({'error': 'Unsupported file type. Allowed: PDF, DOC, DOCX, JPG, PNG.'}, status=status.HTTP_400_BAD_REQUEST)
+    is_reupload = request.data.get('is_reupload', 'false').lower() == 'true'
+    doc = ServiceDocument.objects.create(service=service, file_name=file_name, file=uploaded_file, is_reupload=is_reupload)
+    return Response(InvoiceSerializer(doc, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
 
 @api_view(['POST'])
@@ -257,6 +278,73 @@ def contact(request):
 @permission_classes([IsAuthenticated])
 def invoice_delete(request, service_pk, invoice_pk):
     service = get_object_or_404(Service, pk=service_pk, user=request.user)
-    invoice = get_object_or_404(Invoice, pk=invoice_pk, service=service)
-    invoice.delete()
+    doc     = get_object_or_404(ServiceDocument, pk=invoice_pk, service=service)
+    doc.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ─── Proforma Invoices ────────────────────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def proforma_invoice_list(request):
+    invoices = Invoice.objects.filter(user=request.user).prefetch_related('items').order_by('-created_at')
+    return Response(BillingInvoiceSerializer(invoices, many=True, context={'request': request}).data)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([AuthThrottle])
+def password_reset_request(request):
+    s = PasswordResetRequestSerializer(data=request.data)
+    if not s.is_valid():
+        return Response(s.errors, status=status.HTTP_400_BAD_REQUEST)
+    email = s.validated_data['email'].strip().lower()
+    try:
+        user = User.objects.get(email=email, is_active=True, is_email_verified=True)
+        otp  = generate_otp(user)
+        send_password_reset_email(user, otp)
+    except Exception:
+        pass  # silent — never reveal whether the email exists
+    return Response({'message': 'If an account exists with this email, a reset OTP has been sent.'})
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([AuthThrottle])
+def password_reset_confirm(request):
+    s = PasswordResetConfirmSerializer(data=request.data)
+    if not s.is_valid():
+        return Response(s.errors, status=status.HTTP_400_BAD_REQUEST)
+    s._otp_obj.is_used = True
+    s._otp_obj.save()
+    s._user.set_password(s.validated_data['new_password'])
+    s._user.save()
+    return Response({'message': 'Password reset successfully. You can now log in with your new password.'})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@throttle_classes([UserRateThrottle])
+def admin_user_lookup(request):
+    if not request.user.is_staff:
+        return Response({'found': False}, status=status.HTTP_403_FORBIDDEN)
+    user_id = request.GET.get('id', '').strip()
+    email   = request.GET.get('email', '').strip().lower()
+    try:
+        if user_id:
+            u = User.objects.get(pk=user_id)
+        elif email:
+            u = User.objects.get(email=email)
+        else:
+            return Response({'found': False})
+        return Response({
+            'found':      True,
+            'name':       u.name,
+            'company':    u.company or '',
+            'gst_number': u.gst_number or '',
+            'address':    u.address or '',
+            'phone':      u.phone or '',
+        })
+    except User.DoesNotExist:
+        return Response({'found': False})

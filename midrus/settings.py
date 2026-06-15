@@ -72,6 +72,7 @@ else:
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
             'NAME': BASE_DIR / 'db.sqlite3',
+            'OPTIONS': {'timeout': 20},  # wait up to 20s for write lock instead of failing instantly
         }
     }
 
@@ -81,6 +82,7 @@ AUTH_USER_MODEL = 'accounts.User'
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'rest_framework.authentication.SessionAuthentication',  # lets Django admin AJAX calls authenticate
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
@@ -124,7 +126,7 @@ CSRF_TRUSTED_ORIGINS = config(
 # Always-on headers (safe even without HTTPS)
 SECURE_BROWSER_XSS_FILTER  = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
-X_FRAME_OPTIONS = 'DENY'
+X_FRAME_OPTIONS = 'SAMEORIGIN'
 
 # Activated when Django is behind nginx that terminates SSL
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
@@ -132,9 +134,10 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 # Enable SECURE_SSL_REDIRECT only if nginx is NOT handling the redirect
 SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=False, cast=bool)
 
-# Secure cookies — only enable once HTTPS is configured
-SESSION_COOKIE_SECURE = config('SESSION_COOKIE_SECURE', default=False, cast=bool)
-CSRF_COOKIE_SECURE    = config('CSRF_COOKIE_SECURE', default=False, cast=bool)
+SESSION_COOKIE_SECURE   = config('SESSION_COOKIE_SECURE',   default=not DEBUG, cast=bool)
+CSRF_COOKIE_SECURE      = config('CSRF_COOKIE_SECURE',      default=not DEBUG, cast=bool)
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY    = True
 
 # HSTS — set SECURE_HSTS_SECONDS=31536000 in .env once the site is stable on HTTPS
 SECURE_HSTS_SECONDS             = config('SECURE_HSTS_SECONDS', default=0, cast=int)
@@ -165,10 +168,31 @@ EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL  = config('DEFAULT_FROM_EMAIL',  default='MIDRUS <noreply@midrus.com>')
 ADMIN_EMAIL         = config('ADMIN_EMAIL',         default='')   # receives new-signup notifications
 FRONTEND_URL        = config('FRONTEND_URL',        default='http://localhost:3000')
+BACKEND_URL         = config('BACKEND_URL',         default='http://localhost:8000')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 AUTH_PASSWORD_VALIDATORS = [
-    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator', 'OPTIONS': {'min_length': 6}},
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator', 'OPTIONS': {'min_length': 8}},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
+
+# ─── Logging ─────────────────────────────────────────────────────────────────
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {'format': '{levelname} {asctime} {module} {message}', 'style': '{'},
+    },
+    'handlers': {
+        'console': {'class': 'logging.StreamHandler', 'formatter': 'verbose'},
+    },
+    'root': {'level': 'INFO', 'handlers': ['console']},
+    'loggers': {
+        'django': {'level': 'WARNING', 'handlers': ['console'], 'propagate': False},
+        'django.request': {'level': 'ERROR', 'handlers': ['console'], 'propagate': False},
+        'accounts': {'level': 'INFO', 'handlers': ['console'], 'propagate': False},
+    },
+}

@@ -27,7 +27,15 @@ urlpatterns = [
     path('services/request/',     views.service_request, name='service-request'),
     path('services/<int:pk>/',    views.service_detail,  name='service-detail'),
 
-    # Invoices
+    # Invoices (file documents)
     path('services/<int:service_pk>/invoices/',                        views.invoice_add,    name='invoice-add'),
     path('services/<int:service_pk>/invoices/<int:invoice_pk>/',       views.invoice_delete, name='invoice-delete'),
+
+    # Proforma Invoices
+    path('proforma-invoices/',  views.proforma_invoice_list, name='proforma-invoice-list'),
+    path('admin/user-lookup/', views.admin_user_lookup,     name='admin-user-lookup'),
+
+    # Self-service password reset
+    path('password-reset/',         views.password_reset_request, name='password-reset-request'),
+    path('password-reset/confirm/', views.password_reset_confirm, name='password-reset-confirm'),
 ]

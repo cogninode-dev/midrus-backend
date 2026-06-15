@@ -239,8 +239,6 @@ def service_request(request):
 
 # ─── Invoices ─────────────────────────────────────────────────────────────────
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
 _ALLOWED_MIME_TYPES = {
     'application/pdf', 'application/msword',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -248,6 +246,9 @@ _ALLOWED_MIME_TYPES = {
 }
 _MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
 
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def invoice_add(request, service_pk):
     service = get_object_or_404(Service, pk=service_pk, user=request.user)
     uploaded_file = request.FILES.get('file')

@@ -78,9 +78,9 @@ class UserSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'email', 'name', 'phone', 'company',
             'address', 'website', 'tax_id', 'gst_number',
-            'is_approved', 'created_at', 'updated_at',
+            'is_approved', 'is_staff', 'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'email', 'is_approved', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'email', 'is_approved', 'is_staff', 'created_at', 'updated_at']
 
 
 class ChangePasswordSerializer(serializers.Serializer):

@@ -1,6 +1,6 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
-from . import views
+from . import views, admin_api
 
 urlpatterns = [
     # Public
@@ -34,6 +34,20 @@ urlpatterns = [
     # Proforma Invoices
     path('proforma-invoices/',  views.proforma_invoice_list, name='proforma-invoice-list'),
     path('admin/user-lookup/', views.admin_user_lookup,     name='admin-user-lookup'),
+
+    # In-app admin panel (staff only)
+    path('admin/overview/',                    admin_api.overview,               name='admin-overview'),
+    path('admin/users/',                       admin_api.users,                  name='admin-users'),
+    path('admin/users/<int:pk>/approval/',     admin_api.user_approval,          name='admin-user-approval'),
+    path('admin/services/',                    admin_api.services,               name='admin-services'),
+    path('admin/services/<int:pk>/',           admin_api.service_update,         name='admin-service-update'),
+    path('admin/documents/',                   admin_api.documents,              name='admin-documents'),
+    path('admin/documents/<int:pk>/reject/',   admin_api.document_reject,        name='admin-document-reject'),
+    path('admin/documents/<int:pk>/restore/',  admin_api.document_restore,       name='admin-document-restore'),
+    path('admin/documents/<int:pk>/downloaded/', admin_api.document_mark_downloaded, name='admin-document-downloaded'),
+    path('admin/messages/',                    admin_api.messages,               name='admin-messages'),
+    path('admin/messages/<int:pk>/',           admin_api.message_update,         name='admin-message-update'),
+    path('admin/invoices/',                    admin_api.invoices,               name='admin-invoices'),
 
     # Self-service password reset
     path('password-reset/',         views.password_reset_request, name='password-reset-request'),

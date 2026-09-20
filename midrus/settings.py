@@ -117,11 +117,12 @@ SIMPLE_JWT = {
 
 # ─── Cache ───────────────────────────────────────────────────────────────────
 # Database-backed so every gunicorn worker (and restart) sees the same throttle
-# counters and OTP attempt counts. Create the table once with
-# `python manage.py createcachetable` (the Procfile release step does this).
+# counters and OTP attempt counts. Migration accounts.0015 creates the table, so
+# a normal `manage.py migrate` is enough. The backend fails open (and logs an
+# error) if the table is ever missing, rather than returning 500 on every login.
 CACHES = {
     'default': {
-        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
+        'BACKEND': 'accounts.cache.ResilientDatabaseCache',
         'LOCATION': 'django_cache',
     }
 }

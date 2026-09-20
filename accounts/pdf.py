@@ -1,6 +1,8 @@
 from io import BytesIO
 from decimal import Decimal
 
+from django.utils.html import escape as esc
+
 MONTHS = [
     'January','February','March','April','May','June',
     'July','August','September','October','November','December',
@@ -56,11 +58,11 @@ def _fmt(amount):
 def _addr_html(text, user):
     """Convert ship_to/bill_to TextField to HTML, falling back to user profile."""
     if text and text.strip():
-        return text.replace('\n', '<br>')
-    parts = [f'<b>{user.name.upper()}</b>']
-    if user.company:    parts.append(user.company)
-    if user.address:    parts.append(user.address.replace('\n', '<br>'))
-    if user.gst_number: parts.append(f'GSTIN/UIN : {user.gst_number}')
+        return esc(text).replace('\n', '<br>')
+    parts = [f'<b>{esc(user.name.upper())}</b>']
+    if user.company:    parts.append(esc(user.company))
+    if user.address:    parts.append(esc(user.address).replace('\n', '<br>'))
+    if user.gst_number: parts.append(f'GSTIN/UIN : {esc(user.gst_number)}')
     return '<br>'.join(parts)
 
 
@@ -76,25 +78,25 @@ def _render_html(invoice):
 
     item_rows = ''
     for idx, item in enumerate(items, 1):
-        period     = f'{item.service_name.upper()} — {MONTHS[item.month - 1].upper()} {item.year}'
+        period     = esc(f'{item.service_name.upper()} — {MONTHS[item.month - 1].upper()} {item.year}')
         qty        = float(item.quantity)
         unit_rate  = float(item.amount) / qty if qty else float(item.amount)
         rate_incl  = unit_rate * (1 + int(invoice.gst_rate) / 100)
-        qty_label  = f'{qty:.2f} {item.per}'
+        qty_label  = esc(f'{qty:.2f} {item.per}')
         item_rows += f'''
         <tr>
           {_cell(idx, 'text-align:center;')}
           {_cell(period)}
-          {_cell(item.hsn_code, 'text-align:center;')}
+          {_cell(esc(item.hsn_code), 'text-align:center;')}
           {_cell(qty_label, 'text-align:center;')}
           {_cell(_fmt(rate_incl), 'text-align:right;')}
           {_cell(_fmt(unit_rate), 'text-align:right;')}
-          {_cell(item.per, 'text-align:center;')}
+          {_cell(esc(item.per), 'text-align:center;')}
           {_cell(_fmt(item.amount), 'text-align:right;')}
         </tr>'''
 
     total_qty   = f'{sum(float(i.quantity) for i in items):.2f} Nos'
-    hsn_list    = ', '.join(sorted({i.hsn_code for i in items})) or '998311'
+    hsn_list    = esc(', '.join(sorted({i.hsn_code for i in items})) or '998311')
     total_words = _amount_words(invoice.total)
     gst_words   = _amount_words(invoice.gst_amount)
 
@@ -142,7 +144,7 @@ def _render_html(invoice):
   </td>
   <td style="width:64%;padding:0;">
     <table>
-      <tr>{_cell('Invoice No.','width:25%')}{_cell(invoice.invoice_number,'width:25%;font-weight:bold;')}{_cell('Dated','width:25%')}{_cell(date_str,'width:25%')}</tr>
+      <tr>{_cell('Invoice No.','width:25%')}{_cell(esc(invoice.invoice_number),'width:25%;font-weight:bold;')}{_cell('Dated','width:25%')}{_cell(date_str,'width:25%')}</tr>
       <tr>{_cell('Delivery Note')}{_cell('')}{_cell('Mode/Terms of Payment')}{_cell('')}</tr>
       <tr>{_cell('Reference No. &amp; Date')}{_cell('')}{_cell('Other References')}{_cell('')}</tr>
       <tr>{_cell("Buyer's Order No")}{_cell('')}{_cell('Dated')}{_cell('')}</tr>
@@ -257,7 +259,7 @@ def _render_html(invoice):
     Bank Name : STATE BANK OF INDIA<br>
     A/c No : 4333752009<br>
     Branch &amp; IFS Code : TALCHER &amp; SBIN0000192
-    {f'<br><i style="font-size:8pt;color:#555;">{invoice.notes}</i>' if invoice.notes else ''}
+    {f'<br><i style="font-size:8pt;color:#555;">{esc(invoice.notes)}</i>' if invoice.notes else ''}
   </td>
   <td style="width:30%;padding:4px;">
     for MIDRUS ASSOCIATE PRIVATE LIMITED

@@ -4,13 +4,15 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 import logging
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
+from .files import clean_filename, validate_upload
+from .security import get_user_by_email, revoke_all_tokens
 
 logger = logging.getLogger(__name__)
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from django.shortcuts import get_object_or_404
 
-from .models import User, Service, ServiceDocument, ContactMessage, Invoice
+from .models import User, Service, ServiceDocument, Invoice
 from .serializers import (
     RegisterSerializer, LoginSerializer, UserSerializer,
     ChangePasswordSerializer, ServiceSerializer, InvoiceSerializer,
@@ -28,6 +30,10 @@ from .emails import (
 
 class AuthThrottle(AnonRateThrottle):
     scope = 'auth'
+
+
+class ContactThrottle(AnonRateThrottle):
+    scope = 'contact'
 
 
 def get_tokens(user):
@@ -85,11 +91,10 @@ def verify_email(request):
 @permission_classes([AllowAny])
 @throttle_classes([AuthThrottle])
 def resend_otp(request):
-    email = request.data.get('email', '').strip()
-    try:
-        user = User.objects.get(email=email, is_email_verified=False)
-    except User.DoesNotExist:
-        return Response({'error': 'No unverified account found with this email.'}, status=status.HTTP_400_BAD_REQUEST)
+    user = get_user_by_email(str(request.data.get('email', '')), is_email_verified=False)
+    if user is None:
+        # Same reply as success, so this can't be used to probe for accounts.
+        return Response({'message': 'If an unverified account exists, a new OTP has been sent.'})
     try:
         otp = generate_otp(user)
         send_otp_email(user, otp)
@@ -136,10 +141,10 @@ def verify_login_otp(request):
 @permission_classes([AllowAny])
 @throttle_classes([AuthThrottle])
 def resend_login_otp(request):
-    email = request.data.get('email', '').strip()
-    try:
-        user = User.objects.get(email=email, is_active=True, is_email_verified=True)
-    except User.DoesNotExist:
+    user = get_user_by_email(
+        str(request.data.get('email', '')), is_active=True, is_email_verified=True,
+    )
+    if user is None:
         return Response({'message': 'If an account exists, a new OTP has been sent.'})
     try:
         otp = generate_otp(user)
@@ -152,8 +157,16 @@ def resend_login_otp(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def logout(request):
+    refresh = request.data.get('refresh')
+    if not refresh:
+        # RefreshToken(None) would happily mint and blacklist a *new* token,
+        # reporting success while the caller's real token stays valid.
+        return Response({'error': 'refresh token is required.'}, status=status.HTTP_400_BAD_REQUEST)
     try:
-        RefreshToken(request.data.get('refresh')).blacklist()
+        token = RefreshToken(refresh)
+        if str(token.get('user_id')) != str(request.user.pk):
+            raise TokenError('Token does not belong to this user.')
+        token.blacklist()
     except TokenError:
         return Response({'error': 'Invalid or already-expired token.'}, status=status.HTTP_400_BAD_REQUEST)
     return Response({'message': 'Logged out successfully.'})
@@ -239,34 +252,26 @@ def service_request(request):
 
 # ─── Invoices ─────────────────────────────────────────────────────────────────
 
-_ALLOWED_MIME_TYPES = {
-    'application/pdf', 'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'image/jpeg', 'image/png',
-}
-_MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
-
-
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def invoice_add(request, service_pk):
     service = get_object_or_404(Service, pk=service_pk, user=request.user)
     uploaded_file = request.FILES.get('file')
-    file_name = (uploaded_file.name if uploaded_file else request.data.get('file_name', '')).strip()
+    file_name = clean_filename(uploaded_file.name if uploaded_file else str(request.data.get('file_name', '')))
     if not file_name:
         return Response({'error': 'file is required.'}, status=status.HTTP_400_BAD_REQUEST)
     if uploaded_file:
-        if uploaded_file.size > _MAX_UPLOAD_BYTES:
-            return Response({'error': 'File too large. Maximum size is 20 MB.'}, status=status.HTTP_400_BAD_REQUEST)
-        if uploaded_file.content_type not in _ALLOWED_MIME_TYPES:
-            return Response({'error': 'Unsupported file type. Allowed: PDF, DOC, DOCX, JPG, PNG.'}, status=status.HTTP_400_BAD_REQUEST)
-    is_reupload = request.data.get('is_reupload', 'false').lower() == 'true'
+        problem = validate_upload(uploaded_file)
+        if problem:
+            return Response({'error': problem}, status=status.HTTP_400_BAD_REQUEST)
+    is_reupload = str(request.data.get('is_reupload', 'false')).lower() in ('true', '1')
     doc = ServiceDocument.objects.create(service=service, file_name=file_name, file=uploaded_file, is_reupload=is_reupload)
     return Response(InvoiceSerializer(doc, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([ContactThrottle])
 def contact(request):
     s = ContactMessageSerializer(data=request.data)
     if s.is_valid():
@@ -300,13 +305,17 @@ def password_reset_request(request):
     s = PasswordResetRequestSerializer(data=request.data)
     if not s.is_valid():
         return Response(s.errors, status=status.HTTP_400_BAD_REQUEST)
-    email = s.validated_data['email'].strip().lower()
     try:
-        user = User.objects.get(email=email, is_active=True, is_email_verified=True)
-        otp  = generate_otp(user)
-        send_password_reset_email(user, otp)
-    except Exception:
-        pass  # silent — never reveal whether the email exists
+        user = get_user_by_email(
+            s.validated_data['email'], is_active=True, is_email_verified=True,
+        )
+        if user is not None:
+            otp = generate_otp(user)
+            send_password_reset_email(user, otp)
+    except Exception as exc:
+        # Silent to the caller — never reveal whether the email exists — but
+        # visible to operators, unlike a bare `pass`.
+        logger.warning('Password reset email failed: %s', exc)
     return Response({'message': 'If an account exists with this email, a reset OTP has been sent.'})
 
 
@@ -321,6 +330,8 @@ def password_reset_confirm(request):
     s._otp_obj.save()
     s._user.set_password(s.validated_data['new_password'])
     s._user.save()
+    # Whoever held the old password (or a stolen refresh token) loses access.
+    revoke_all_tokens(s._user)
     return Response({'message': 'Password reset successfully. You can now log in with your new password.'})
 
 
@@ -331,12 +342,16 @@ def admin_user_lookup(request):
     if not request.user.is_staff:
         return Response({'found': False}, status=status.HTTP_403_FORBIDDEN)
     user_id = request.GET.get('id', '').strip()
-    email   = request.GET.get('email', '').strip().lower()
+    email   = request.GET.get('email', '').strip()
     try:
         if user_id:
-            u = User.objects.get(pk=user_id)
+            if not user_id.isdigit():
+                return Response({'found': False})
+            u = User.objects.get(pk=int(user_id))
         elif email:
-            u = User.objects.get(email=email)
+            u = get_user_by_email(email)
+            if u is None:
+                return Response({'found': False})
         else:
             return Response({'found': False})
         return Response({

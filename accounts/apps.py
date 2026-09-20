@@ -15,3 +15,5 @@ class AccountsConfig(AppConfig):
                 cursor.execute('PRAGMA busy_timeout=20000;')  # 20s at the SQLite driver level too
 
         connection_created.connect(_set_wal)
+
+        from . import signals  # noqa: F401  (registers file-cleanup receivers)

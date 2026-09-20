@@ -1,6 +1,9 @@
 import secrets
+from urllib.parse import quote
+
 from django.core.mail import send_mail, EmailMultiAlternatives
 from django.conf import settings
+from django.utils.html import escape as esc
 
 
 def generate_otp(user):
@@ -8,6 +11,9 @@ def generate_otp(user):
     EmailOTP.objects.filter(user=user, is_used=False).update(is_used=True)
     otp = str(secrets.randbelow(900000) + 100000)
     EmailOTP.objects.create(user=user, otp=otp)
+    # A fresh code starts with a clean slate of wrong-guess attempts.
+    from .security import clear_otp_failures
+    clear_otp_failures(user)
     return otp
 
 
@@ -29,7 +35,7 @@ def send_otp_email(user, otp: str) -> None:
     body = f"""
     <h2 style="color:#1A1A2E;font-size:20px;font-weight:700;margin:0 0 12px;">Verify Your Email</h2>
     <p style="color:#6b7280;font-size:15px;line-height:1.6;margin:0 0 24px;">
-      Hi {user.name}, use the OTP below to verify your email address.
+      Hi {esc(user.name)}, use the OTP below to verify your email address.
       It expires in <strong>10 minutes</strong>.
     </p>
     <div style="background:#f9fafb;border:2px dashed #e5e7eb;border-radius:12px;padding:24px;text-align:center;margin:0 0 24px;">
@@ -53,7 +59,7 @@ def send_login_otp_email(user, otp: str) -> None:
     body = f"""
     <h2 style="color:#1A1A2E;font-size:20px;font-weight:700;margin:0 0 12px;">Login Verification</h2>
     <p style="color:#6b7280;font-size:15px;line-height:1.6;margin:0 0 24px;">
-      Hi {user.name}, use the OTP below to complete your sign-in.
+      Hi {esc(user.name)}, use the OTP below to complete your sign-in.
       It expires in <strong>10 minutes</strong>.
     </p>
     <div style="background:#f9fafb;border:2px dashed #e5e7eb;border-radius:12px;padding:24px;text-align:center;margin:0 0 24px;">
@@ -74,7 +80,7 @@ def send_login_otp_email(user, otp: str) -> None:
 
 
 def send_admin_signup_notification(user) -> None:
-    admin_url = f"{settings.BACKEND_URL}/admin/accounts/user/?q={user.email}"
+    admin_url = f"{settings.BACKEND_URL}/admin/accounts/user/?q={quote(user.email)}"
     body = f"""
     <p style="font-size:28px;margin:0 0 16px;">🔔</p>
     <h2 style="color:#1A1A2E;font-size:20px;font-weight:700;margin:0 0 12px;">New User Signed Up</h2>
@@ -83,13 +89,13 @@ def send_admin_signup_notification(user) -> None:
     </p>
     <table style="width:100%;border-collapse:collapse;margin:0 0 24px;">
       <tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;font-weight:600;width:30%;color:#374151;">Name</td>
-          <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#111827;">{user.name}</td></tr>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#111827;">{esc(user.name)}</td></tr>
       <tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;font-weight:600;color:#374151;">Email</td>
-          <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#111827;">{user.email}</td></tr>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#111827;">{esc(user.email)}</td></tr>
       <tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;font-weight:600;color:#374151;">Company</td>
-          <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#111827;">{user.company or '—'}</td></tr>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#111827;">{esc(user.company or '—')}</td></tr>
       <tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;font-weight:600;color:#374151;">Phone</td>
-          <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#111827;">{user.phone or '—'}</td></tr>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#111827;">{esc(user.phone or '—')}</td></tr>
     </table>
     <a href="{admin_url}"
        style="display:inline-block;background:#1A1A2E;color:#fff;text-decoration:none;
@@ -123,7 +129,7 @@ def send_invoice_email(invoice, pdf_bytes: bytes | None = None) -> None:
         period = f'{MONTHS[item.month - 1]} {item.year}'
         service_rows += f'''
       <tr>
-        <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#111827;">{item.service_name}</td>
+        <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#111827;">{esc(item.service_name)}</td>
         <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#6b7280;text-align:center;">{period}</td>
         <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#111827;text-align:right;">&#8377; {float(item.amount):,.2f}</td>
       </tr>'''
@@ -132,7 +138,7 @@ def send_invoice_email(invoice, pdf_bytes: bytes | None = None) -> None:
     <p style="font-size:28px;margin:0 0 16px;">🧾</p>
     <h2 style="color:#1A1A2E;font-size:20px;font-weight:700;margin:0 0 12px;">New Invoice from MIDRUS</h2>
     <p style="color:#6b7280;font-size:15px;line-height:1.6;margin:0 0 24px;">
-      Hi {user.name}, a new invoice has been raised for your account.
+      Hi {esc(user.name)}, a new invoice has been raised for your account.
       The invoice PDF is attached. Please review and complete the payment at your earliest convenience.
     </p>
 
@@ -196,7 +202,7 @@ def send_invoice_email(invoice, pdf_bytes: bytes | None = None) -> None:
     email.attach_alternative(_base(body), 'text/html')
     if pdf_bytes:
         email.attach(f'{invoice.invoice_number}.pdf', pdf_bytes, 'application/pdf')
-    email.send(fail_silently=True)
+    email.send(fail_silently=False)
 
 
 def send_password_reset_email(user, otp: str) -> None:
@@ -204,7 +210,7 @@ def send_password_reset_email(user, otp: str) -> None:
     <p style="font-size:28px;margin:0 0 16px;">🔐</p>
     <h2 style="color:#1A1A2E;font-size:20px;font-weight:700;margin:0 0 12px;">Reset Your Password</h2>
     <p style="color:#6b7280;font-size:15px;line-height:1.6;margin:0 0 24px;">
-      Hi {user.name}, use the OTP below to reset your MIDRUS account password.
+      Hi {esc(user.name)}, use the OTP below to reset your MIDRUS account password.
       It expires in <strong>10 minutes</strong>.
     </p>
     <div style="background:#f9fafb;border:2px dashed #e5e7eb;border-radius:12px;padding:24px;text-align:center;margin:0 0 24px;">
@@ -230,7 +236,7 @@ def send_approved_email(user) -> None:
     <p style="font-size:28px;margin:0 0 16px;">✅</p>
     <h2 style="color:#1A1A2E;font-size:20px;font-weight:700;margin:0 0 12px;">Account Approved!</h2>
     <p style="color:#6b7280;font-size:15px;line-height:1.6;margin:0 0 12px;">
-      Hi {user.name}, great news — your MIDRUS account has been
+      Hi {esc(user.name)}, great news — your MIDRUS account has been
       <strong style="color:#16a34a;">approved</strong>!
     </p>
     <p style="color:#6b7280;font-size:15px;line-height:1.6;margin:0 0 32px;">

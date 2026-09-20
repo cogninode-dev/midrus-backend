@@ -1,8 +1,11 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
-from . import views, admin_api
+from . import views, admin_api, files
 
 urlpatterns = [
+    # Signed, expiring file downloads (uploads are never served from /media/)
+    path('files/<str:token>/', files.file_download, name='file-download'),
+
     # Public
     path('contact/',         views.contact,         name='contact'),
 

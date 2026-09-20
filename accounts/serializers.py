@@ -1,6 +1,21 @@
 from rest_framework import serializers
-from django.contrib.auth import authenticate
-from .models import User, Service, ServiceDocument, ContactMessage, EmailOTP, Invoice, InvoiceItem
+from .files import make_file_url
+from .models import User, Service, ServiceDocument, ContactMessage, Invoice, InvoiceItem
+from .security import consume_otp, get_user_by_email, normalize_email
+
+
+class SingleLineMixin:
+    """Names end up in email subjects and PDFs: no line breaks or control chars."""
+
+    @staticmethod
+    def _single_line(value):
+        return ' '.join(str(value).split())
+
+    def validate_name(self, value):
+        return self._single_line(value)
+
+    def validate_company(self, value):
+        return self._single_line(value)
 
 
 class PasswordResetRequestSerializer(serializers.Serializer):
@@ -13,22 +28,25 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
     new_password = serializers.CharField(min_length=6, write_only=True)
 
     def validate(self, data):
-        try:
-            user = User.objects.get(email=data['email'].lower(), is_active=True)
-        except User.DoesNotExist:
-            raise serializers.ValidationError({'email': 'No account found with this email.'})
-        try:
-            otp_obj = user.otps.filter(otp=data['otp'], is_used=False).latest('created_at')
-        except EmailOTP.DoesNotExist:
+        # Same answer whether or not the account exists: the request endpoint
+        # is deliberately silent, so this one must not reveal it either.
+        user = get_user_by_email(data['email'], is_active=True, is_email_verified=True)
+        if user is None:
             raise serializers.ValidationError({'otp': 'Invalid or expired OTP.'})
-        if not otp_obj.is_valid():
-            raise serializers.ValidationError({'otp': 'This OTP has expired. Request a new one.'})
+        try:
+            otp_obj = consume_otp(
+                user, data['otp'],
+                invalid='Invalid or expired OTP.',
+                expired='This OTP has expired. Request a new one.',
+            )
+        except serializers.ValidationError as exc:
+            raise serializers.ValidationError({'otp': exc.detail})
         self._user    = user
         self._otp_obj = otp_obj
         return data
 
 
-class RegisterSerializer(serializers.ModelSerializer):
+class RegisterSerializer(SingleLineMixin, serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=6)
 
     class Meta:
@@ -36,7 +54,8 @@ class RegisterSerializer(serializers.ModelSerializer):
         fields = ['email', 'password', 'name', 'phone', 'company']
 
     def validate_email(self, value):
-        if User.objects.filter(email=value).exists():
+        value = normalize_email(value)
+        if User.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError('An account with this email already exists.')
         return value
 
@@ -50,9 +69,11 @@ class LoginSerializer(serializers.Serializer):
 
     def validate(self, data):
         # Check credentials manually to distinguish wrong password vs pending approval
-        try:
-            user = User.objects.get(email=data['email'])
-        except User.DoesNotExist:
+        user = get_user_by_email(data['email'])
+        if user is None:
+            # Burn the same hashing time as a real login so response time
+            # does not reveal which emails have accounts.
+            User().set_password(data['password'])
             raise serializers.ValidationError('Invalid email or password.')
 
         if not user.check_password(data['password']):
@@ -72,7 +93,7 @@ class LoginSerializer(serializers.Serializer):
         return data
 
 
-class UserSerializer(serializers.ModelSerializer):
+class UserSerializer(SingleLineMixin, serializers.ModelSerializer):
     class Meta:
         model  = User
         fields = [
@@ -104,7 +125,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
         if not obj.file:
             return None
         request = self.context.get('request')
-        return request.build_absolute_uri(obj.file.url) if request else obj.file.url
+        return make_file_url(request, 'doc', obj.pk)
 
 
 class ServiceSerializer(serializers.ModelSerializer):
@@ -130,6 +151,7 @@ class ContactMessageSerializer(serializers.ModelSerializer):
     class Meta:
         model  = ContactMessage
         fields = ['name', 'email', 'phone', 'company', 'message']
+        extra_kwargs = {'message': {'max_length': 5000}}
 
 
 class VerifyLoginOTPSerializer(serializers.Serializer):
@@ -137,23 +159,10 @@ class VerifyLoginOTPSerializer(serializers.Serializer):
     otp   = serializers.CharField(max_length=6)
 
     def validate(self, data):
-        try:
-            user = User.objects.get(email=data['email'], is_active=True, is_email_verified=True)
-        except User.DoesNotExist:
+        user = get_user_by_email(data['email'], is_active=True, is_email_verified=True)
+        if user is None:
             raise serializers.ValidationError('Invalid credentials.')
-
-        try:
-            otp_obj = EmailOTP.objects.filter(
-                user=user, otp=data['otp'], is_used=False
-            ).latest('created_at')
-        except EmailOTP.DoesNotExist:
-            raise serializers.ValidationError('Invalid OTP.')
-
-        if not otp_obj.is_valid():
-            raise serializers.ValidationError('OTP has expired. Please request a new one.')
-
-        otp_obj.is_used = True
-        otp_obj.save()
+        consume_otp(user, data['otp'])
         data['user'] = user
         return data
 
@@ -202,7 +211,7 @@ class BillingInvoiceSerializer(serializers.ModelSerializer):
         if not obj.uploaded_pdf:
             return None
         request = self.context.get('request')
-        return request.build_absolute_uri(obj.uploaded_pdf.url) if request else obj.uploaded_pdf.url
+        return make_file_url(request, 'invoice', obj.pk)
 
 
 class VerifyEmailSerializer(serializers.Serializer):
@@ -210,25 +219,13 @@ class VerifyEmailSerializer(serializers.Serializer):
     otp   = serializers.CharField(max_length=6)
 
     def validate(self, data):
-        try:
-            user = User.objects.get(email=data['email'])
-        except User.DoesNotExist:
-            raise serializers.ValidationError('No account found with this email.')
+        user = get_user_by_email(data['email'])
+        if user is None:
+            raise serializers.ValidationError('Invalid OTP.')
 
         if user.is_email_verified:
             raise serializers.ValidationError('Email is already verified.')
 
-        try:
-            otp_obj = EmailOTP.objects.filter(
-                user=user, otp=data['otp'], is_used=False
-            ).latest('created_at')
-        except EmailOTP.DoesNotExist:
-            raise serializers.ValidationError('Invalid OTP.')
-
-        if not otp_obj.is_valid():
-            raise serializers.ValidationError('OTP has expired. Please request a new one.')
-
-        otp_obj.is_used = True
-        otp_obj.save()
+        consume_otp(user, data['otp'])
         data['user'] = user
         return data

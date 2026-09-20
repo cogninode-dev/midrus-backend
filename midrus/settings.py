@@ -93,9 +93,16 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_THROTTLE_RATES': {
         'anon': '60/hour',
-        'user': '1000/day',
-        'auth': '10/hour',  # stricter limit for login / register
+        'user': '5000/day',
+        'auth': '10/hour',      # stricter limit for login / register / OTP
+        'contact': '10/hour',   # public contact form
+        'files': '300/hour',    # signed file downloads
     },
+    # Number of reverse proxies in front of Django (nginx = 1). Without this
+    # every request appears to come from the proxy's IP, so *all* users would
+    # share one throttle bucket (e.g. 10 logins per hour for the whole site).
+    # Set NUM_PROXIES=0 if gunicorn is exposed directly.
+    'NUM_PROXIES': config('NUM_PROXIES', default=1, cast=int),
 }
 
 SIMPLE_JWT = {
@@ -106,6 +113,17 @@ SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
     'USER_ID_FIELD': 'id',
     'USER_ID_CLAIM': 'user_id',
+}
+
+# ─── Cache ───────────────────────────────────────────────────────────────────
+# Database-backed so every gunicorn worker (and restart) sees the same throttle
+# counters and OTP attempt counts. Create the table once with
+# `python manage.py createcachetable` (the Procfile release step does this).
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
+        'LOCATION': 'django_cache',
+    }
 }
 
 # ─── CORS ────────────────────────────────────────────────────────────────────
@@ -124,8 +142,8 @@ CSRF_TRUSTED_ORIGINS = config(
 
 # ─── Security headers ────────────────────────────────────────────────────────
 # Always-on headers (safe even without HTTPS)
-SECURE_BROWSER_XSS_FILTER  = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
+# SAMEORIGIN (not DENY) because the admin document viewer embeds files in an iframe.
 X_FRAME_OPTIONS = 'SAMEORIGIN'
 
 # Activated when Django is behind nginx that terminates SSL
@@ -153,10 +171,22 @@ USE_TZ = True
 # ─── Static & media files ────────────────────────────────────────────────────
 STATIC_URL  = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    # Compressed but not manifest-hashed, so a missed `collectstatic` degrades
+    # gracefully instead of turning every admin page into a 500.
+    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedStaticFilesStorage'},
+}
 
 MEDIA_URL  = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+# Client documents are private. Do NOT expose /media/ through nginx; files are
+# delivered via signed links (see accounts/files.py) that expire after this.
+FILE_URL_TTL_SECONDS = config('FILE_URL_TTL_SECONDS', default=3600, cast=int)
+
+# ─── One-time codes ──────────────────────────────────────────────────────────
+OTP_TTL_SECONDS  = 600   # a code is valid for 10 minutes
+OTP_MAX_ATTEMPTS = config('OTP_MAX_ATTEMPTS', default=5, cast=int)
 
 # ─── Email / SMTP ────────────────────────────────────────────────────────────
 EMAIL_BACKEND     = 'django.core.mail.backends.smtp.EmailBackend'

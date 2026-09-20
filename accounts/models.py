@@ -1,5 +1,5 @@
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
-from django.db import models
+from django.db import IntegrityError, models, transaction
 
 
 class UserManager(BaseUserManager):
@@ -170,9 +170,18 @@ class Invoice(models.Model):
         return f'{str(y)[2:]}-{str(y+1)[2:]}' if now.month >= 4 else f'{str(y-1)[2:]}-{str(y)[2:]}'
 
     def _next_invoice_number(self):
-        fy    = self._financial_year()
-        count = Invoice.objects.filter(invoice_number__contains=f'/{fy}/').count() + 1
-        return f'MAPL/{fy}/{str(count).zfill(4)}'
+        # Highest existing sequence + 1. Counting rows instead would re-issue a
+        # number as soon as any invoice is deleted and crash on the unique key.
+        prefix = f'MAPL/{self._financial_year()}/'
+        last = 0
+        for number in Invoice.objects.filter(
+            invoice_number__startswith=prefix,
+        ).values_list('invoice_number', flat=True):
+            try:
+                last = max(last, int(number[len(prefix):]))
+            except ValueError:
+                continue
+        return f'{prefix}{str(last + 1).zfill(4)}'
 
     def recalculate(self):
         from decimal import Decimal
@@ -181,9 +190,19 @@ class Invoice(models.Model):
         self.total      = self.subtotal + self.gst_amount
 
     def save(self, *args, **kwargs):
-        if not self.invoice_number:
+        if self.invoice_number:
+            return super().save(*args, **kwargs)
+        # Two invoices created at the same instant can compute the same number;
+        # the unique constraint catches that, so retry with a fresh one.
+        for attempt in range(5):
             self.invoice_number = self._next_invoice_number()
-        super().save(*args, **kwargs)
+            try:
+                with transaction.atomic():
+                    return super().save(*args, **kwargs)
+            except IntegrityError:
+                self.invoice_number = ''
+                if attempt == 4:
+                    raise
 
     def __str__(self):
         return f'{self.invoice_number} — {self.user.name}'

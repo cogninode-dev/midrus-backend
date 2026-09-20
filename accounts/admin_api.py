@@ -17,6 +17,7 @@ from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 
 from .emails import send_approved_email, send_invoice_email
+from .files import make_file_url
 from .models import (
     ContactMessage, Invoice, InvoiceItem, Service, ServiceDocument, User,
 )
@@ -93,7 +94,7 @@ def _document_row(d, request):
     return {
         'id': d.id,
         'file_name': d.file_name,
-        'file_url': request.build_absolute_uri(d.file.url) if d.file else None,
+        'file_url': make_file_url(request, 'doc', d.pk) if d.file else None,
         'uploaded_at': d.uploaded_at,
         'is_downloaded': d.is_downloaded,
         'status': d.status,

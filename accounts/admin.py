@@ -1,5 +1,4 @@
 import datetime
-import mimetypes
 import os
 from django import forms
 from django.contrib import admin, messages
@@ -11,6 +10,7 @@ from django.utils.html import format_html, mark_safe
 
 from .models import User, Service, ServiceDocument, ContactMessage, Invoice, InvoiceItem
 from .emails import send_approved_email, send_invoice_email
+from .files import safe_file_response
 
 admin.site.site_header = 'MIDRUS Administration'
 admin.site.site_title  = 'MIDRUS Admin'
@@ -235,11 +235,8 @@ class DocumentAdmin(admin.ModelAdmin):
         doc = get_object_or_404(ServiceDocument, pk=pk)
         if not doc.file:
             raise Http404('No file attached.')
-        filename = doc.file_name or os.path.basename(doc.file.name)
-        mime, _ = mimetypes.guess_type(filename)
-        response = FileResponse(doc.file.open('rb'), content_type=mime or 'application/octet-stream')
-        response['Content-Disposition'] = f'inline; filename="{filename}"'
-        response['X-Frame-Options'] = 'SAMEORIGIN'
+        response = safe_file_response(doc.file, doc.file_name)
+        response['X-Frame-Options'] = 'SAMEORIGIN'  # the admin viewer iframes this
         return response
 
     def _mark_download_view(self, request, pk):

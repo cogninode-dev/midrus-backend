@@ -1,4 +1,7 @@
 from rest_framework import serializers
+from django.conf import settings
+from django.utils import timezone
+
 from .files import make_file_url
 from .models import User, Service, ServiceDocument, ContactMessage, Invoice, InvoiceItem
 from .security import consume_otp, get_user_by_email, normalize_email
@@ -48,10 +51,18 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 
 class RegisterSerializer(SingleLineMixin, serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=6)
+    accepted_terms = serializers.BooleanField(write_only=True, required=False, default=False)
 
     class Meta:
         model  = User
-        fields = ['email', 'password', 'name', 'phone', 'company']
+        fields = ['email', 'password', 'name', 'phone', 'company', 'accepted_terms']
+
+    def validate(self, attrs):
+        if settings.REQUIRE_TERMS_ACCEPTANCE and not attrs.get('accepted_terms'):
+            raise serializers.ValidationError(
+                {'accepted_terms': 'You must accept the Terms of Service and Privacy Policy.'}
+            )
+        return attrs
 
     def validate_email(self, value):
         value = normalize_email(value)
@@ -60,7 +71,16 @@ class RegisterSerializer(SingleLineMixin, serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        return User.objects.create_user(is_active=True, is_email_verified=False, is_approved=False, **validated_data)
+        consent = {}
+        if validated_data.pop('accepted_terms', False):
+            consent = {
+                'terms_accepted_at': timezone.now(),
+                'terms_version': settings.TERMS_VERSION,
+            }
+        return User.objects.create_user(
+            is_active=True, is_email_verified=False, is_approved=False,
+            **consent, **validated_data,
+        )
 
 
 class LoginSerializer(serializers.Serializer):

@@ -1,6 +1,6 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
-from . import views, admin_api, files
+from . import views, admin_api, files, account
 
 urlpatterns = [
     # Signed, expiring file downloads (uploads are never served from /media/)
@@ -20,6 +20,7 @@ urlpatterns = [
     path('me/',              views.me,              name='me'),
     path('profile/update/',  views.update_profile,  name='update-profile'),
     path('password/change/', views.change_password, name='change-password'),
+    path('account/delete/',  account.account_delete, name='account-delete'),
     path('token/refresh/',   TokenRefreshView.as_view(), name='token-refresh'),
 
     # Dashboard

@@ -97,6 +97,7 @@ REST_FRAMEWORK = {
         'auth': '10/hour',      # stricter limit for login / register / OTP
         'contact': '10/hour',   # public contact form
         'files': '300/hour',    # signed file downloads
+        'account': '5/hour',    # sensitive account actions (deletion)
     },
     # Number of reverse proxies in front of Django (nginx = 1). Without this
     # every request appears to come from the proxy's IP, so *all* users would
@@ -184,6 +185,14 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # Client documents are private. Do NOT expose /media/ through nginx; files are
 # delivered via signed links (see accounts/files.py) that expire after this.
 FILE_URL_TTL_SECONDS = config('FILE_URL_TTL_SECONDS', default=3600, cast=int)
+
+# ─── Legal ───────────────────────────────────────────────────────────────────
+# Bump when the Terms / Privacy Policy change; stored with each acceptance.
+TERMS_VERSION = '2026-09-21'
+# Reject sign-ups that don't send accepted_terms=true. Off by default so
+# clients that predate the consent checkbox (e.g. the web frontend) keep
+# working; switch on once every sign-up form asks for consent.
+REQUIRE_TERMS_ACCEPTANCE = config('REQUIRE_TERMS_ACCEPTANCE', default=False, cast=bool)
 
 # ─── One-time codes ──────────────────────────────────────────────────────────
 OTP_TTL_SECONDS  = 600   # a code is valid for 10 minutes

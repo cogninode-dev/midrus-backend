@@ -125,9 +125,9 @@ def _message_row(m):
 @permission_classes(STAFF)
 def overview(request):
     return Response({
-        'users_total': User.objects.filter(is_staff=False).count(),
+        'users_total': User.objects.filter(is_staff=False, is_active=True).count(),
         'users_pending_approval': User.objects.filter(
-            is_staff=False, is_email_verified=True, is_approved=False,
+            is_staff=False, is_active=True, is_email_verified=True, is_approved=False,
         ).count(),
         'services_requested': Service.objects.filter(status='Requested').count(),
         'services_active': Service.objects.filter(status='Active').count(),
@@ -148,7 +148,7 @@ def overview(request):
 @api_view(['GET'])
 @permission_classes(STAFF)
 def users(request):
-    qs = User.objects.filter(is_staff=False).annotate(services_count=Count('services'))
+    qs = User.objects.filter(is_staff=False, is_active=True).annotate(services_count=Count('services'))
     flt = request.GET.get('filter', 'all')
     if flt == 'pending':
         qs = qs.filter(is_email_verified=True, is_approved=False)

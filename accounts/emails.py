@@ -230,6 +230,31 @@ def send_password_reset_email(user, otp: str) -> None:
     )
 
 
+def send_account_deleted_email(email: str, name: str) -> None:
+    body = f"""
+    <h2 style="color:#1A1A2E;font-size:20px;font-weight:700;margin:0 0 12px;">Your account has been deleted</h2>
+    <p style="color:#6b7280;font-size:15px;line-height:1.6;margin:0 0 16px;">
+      Hi {esc(name)}, as you requested, your MIDRUS account and personal details have been deleted.
+    </p>
+    <p style="color:#6b7280;font-size:14px;line-height:1.6;margin:0 0 16px;">
+      Invoices and tax records already issued to you are kept for the period required by
+      Indian tax and company law, but they are no longer linked to a login.
+    </p>
+    <p style="color:#9ca3af;font-size:13px;margin:0;">
+      If you did not request this, contact us immediately at
+      <a href="mailto:info@midrusindia.com" style="color:#374151;">info@midrusindia.com</a>.
+    </p>"""
+    send_mail(
+        subject='MIDRUS — Your account has been deleted',
+        message=f'Hi {name}, your MIDRUS account and personal details have been deleted. '
+                'If you did not request this, contact info@midrusindia.com immediately.',
+        html_message=_base(body),
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[email],
+        fail_silently=True,
+    )
+
+
 def send_approved_email(user) -> None:
     login_url = f"{settings.FRONTEND_URL}/login"
     body = f"""

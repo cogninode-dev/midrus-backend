@@ -5,12 +5,13 @@ from a public /media/ path. Instead every API response carries a short-lived
 signed URL, and files are streamed with headers that stop the browser from
 executing anything an attacker managed to upload.
 """
+import logging
 import os
 import re
 
 from django.conf import settings
 from django.core import signing
-from django.http import FileResponse, Http404
+from django.http import FileResponse, Http404, HttpResponse
 from django.urls import reverse
 from django.utils.http import content_disposition_header
 from rest_framework.decorators import (
@@ -18,6 +19,8 @@ from rest_framework.decorators import (
 )
 from rest_framework.permissions import AllowAny
 from rest_framework.throttling import AnonRateThrottle
+
+logger = logging.getLogger(__name__)
 
 SIGNING_SALT = 'midrus.file-download'
 
@@ -74,8 +77,12 @@ def validate_upload(uploaded_file) -> str | None:
     return None
 
 
-def safe_file_response(fieldfile, filename: str = '') -> FileResponse:
-    """Stream a stored file with headers that neutralise hostile content."""
+def safe_file_response(fieldfile, filename: str = '', as_attachment: bool | None = None) -> FileResponse:
+    """Stream a stored file with headers that neutralise hostile content.
+
+    By default browser-safe types (PDF, images) open inline and everything else
+    downloads; pass as_attachment=True to force a download.
+    """
     filename = clean_filename(filename) or os.path.basename(fieldfile.name)
     ext = os.path.splitext(filename)[1].lower()
     inline_type = _INLINE_TYPES.get(ext)
@@ -85,7 +92,8 @@ def safe_file_response(fieldfile, filename: str = '') -> FileResponse:
         content_type=inline_type or 'application/octet-stream',
     )
     response['Content-Disposition'] = content_disposition_header(
-        as_attachment=inline_type is None, filename=filename,
+        as_attachment=(inline_type is None) if as_attachment is None else as_attachment,
+        filename=filename,
     )
     response['X-Content-Type-Options'] = 'nosniff'
     response['Cache-Control'] = 'private, no-store'
@@ -99,10 +107,47 @@ def safe_file_response(fieldfile, filename: str = '') -> FileResponse:
 # ─── Signed download links ───────────────────────────────────────────────────
 
 def make_file_url(request, kind: str, pk: int) -> str:
-    """A time-limited absolute URL for a stored file (kind: 'doc' | 'invoice')."""
+    """A time-limited absolute URL for a stored file (kind: 'doc' | 'invoice' | 'invoice-pdf')."""
     token = signing.dumps({'k': kind, 'id': pk}, salt=SIGNING_SALT)
     path = reverse('file-download', args=[token])
     return request.build_absolute_uri(path) if request else path
+
+
+def _invoice_pdf_response(pk):
+    """The invoice as a downloadable PDF: the uploaded file if there is one,
+    otherwise generated on the fly from the invoice template."""
+    from .models import Invoice
+    from .pdf import generate_invoice_pdf
+
+    invoice = (
+        Invoice.objects.select_related('user').prefetch_related('items').filter(pk=pk).first()
+    )
+    if invoice is None:
+        raise Http404
+    filename = f'{invoice.invoice_number.replace("/", "-")}.pdf'
+
+    if invoice.uploaded_pdf:
+        try:
+            return safe_file_response(invoice.uploaded_pdf, filename, as_attachment=True)
+        except FileNotFoundError:
+            logger.warning('Uploaded PDF missing for invoice %s; regenerating.', invoice.pk)
+
+    try:
+        pdf_bytes = generate_invoice_pdf(invoice)
+    except Exception:
+        logger.exception('Could not generate the PDF for invoice %s', invoice.pk)
+        return HttpResponse(
+            'The invoice PDF could not be generated right now. Please try again.',
+            status=503, content_type='text/plain',
+        )
+
+    response = HttpResponse(pdf_bytes, content_type='application/pdf')
+    response['Content-Disposition'] = content_disposition_header(
+        as_attachment=True, filename=filename,
+    )
+    response['X-Content-Type-Options'] = 'nosniff'
+    response['Cache-Control'] = 'private, no-store'
+    return response
 
 
 class FileThrottle(AnonRateThrottle):
@@ -122,6 +167,9 @@ def file_download(request, token):
         )
     except signing.BadSignature:  # includes SignatureExpired
         raise Http404('This link is invalid or has expired.')
+
+    if data.get('k') == 'invoice-pdf':
+        return _invoice_pdf_response(data.get('id'))
 
     if data.get('k') == 'doc':
         doc = ServiceDocument.objects.filter(pk=data.get('id')).first()

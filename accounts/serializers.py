@@ -189,6 +189,7 @@ class BillingInvoiceSerializer(serializers.ModelSerializer):
     customer_phone   = serializers.SerializerMethodField()
     items            = InvoiceItemSerializer(many=True, read_only=True)
     uploaded_pdf_url = serializers.SerializerMethodField()
+    pdf_url          = serializers.SerializerMethodField()
 
     class Meta:
         model  = Invoice
@@ -197,7 +198,7 @@ class BillingInvoiceSerializer(serializers.ModelSerializer):
             'customer', 'customer_email', 'customer_address',
             'customer_gst', 'customer_company', 'customer_phone',
             'items', 'gst_rate', 'subtotal', 'gst_amount', 'total',
-            'uploaded_pdf_url', 'notes', 'created_at',
+            'uploaded_pdf_url', 'pdf_url', 'notes', 'created_at',
         ]
 
     def get_customer(self, obj):         return obj.user.name
@@ -206,6 +207,11 @@ class BillingInvoiceSerializer(serializers.ModelSerializer):
     def get_customer_gst(self, obj):     return obj.user.gst_number or ''
     def get_customer_company(self, obj): return obj.user.company or ''
     def get_customer_phone(self, obj):   return obj.user.phone or ''
+
+    def get_pdf_url(self, obj):
+        # Always available: the uploaded PDF if present, else generated from
+        # the invoice template when the (signed, expiring) link is opened.
+        return make_file_url(self.context.get('request'), 'invoice-pdf', obj.pk)
 
     def get_uploaded_pdf_url(self, obj):
         if not obj.uploaded_pdf:

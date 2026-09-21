@@ -144,13 +144,13 @@ def _render_html(invoice):
   </td>
   <td style="width:64%;padding:0;">
     <table>
-      <tr>{_cell('Invoice No.','width:25%')}{_cell(esc(invoice.invoice_number),'width:25%;font-weight:bold;')}{_cell('Dated','width:25%')}{_cell(date_str,'width:25%')}</tr>
-      <tr>{_cell('Delivery Note')}{_cell('')}{_cell('Mode/Terms of Payment')}{_cell('')}</tr>
-      <tr>{_cell('Reference No. &amp; Date')}{_cell('')}{_cell('Other References')}{_cell('')}</tr>
-      <tr>{_cell("Buyer's Order No")}{_cell('')}{_cell('Dated')}{_cell('')}</tr>
-      <tr>{_cell('Dispatch Doc No')}{_cell('')}{_cell('Delivery Note Date')}{_cell('')}</tr>
-      <tr>{_cell('Dispatched through')}{_cell('')}{_cell('Destination')}{_cell('')}</tr>
-      <tr>{_cell('Terms of Delivery')}<td colspan="3" style="border:1px solid #000;padding:2px 4px;"></td></tr>
+      <tr>{_cell('Invoice No.','width:80pt;')}{_cell(esc(invoice.invoice_number),'width:110pt;font-weight:bold;')}{_cell('Dated','width:80pt;')}{_cell(date_str,'width:94pt;')}</tr>
+      <tr>{_cell('Delivery Note')}{_cell('&nbsp;')}{_cell('Mode/Terms of Payment')}{_cell('&nbsp;')}</tr>
+      <tr>{_cell('Reference No. &amp; Date')}{_cell('&nbsp;')}{_cell('Other References')}{_cell('&nbsp;')}</tr>
+      <tr>{_cell("Buyer's Order No")}{_cell('&nbsp;')}{_cell('Dated')}{_cell('&nbsp;')}</tr>
+      <tr>{_cell('Dispatch Doc No')}{_cell('&nbsp;')}{_cell('Delivery Note Date')}{_cell('&nbsp;')}</tr>
+      <tr>{_cell('Dispatched through')}{_cell('&nbsp;')}{_cell('Destination')}{_cell('&nbsp;')}</tr>
+      <tr>{_cell('Terms of Delivery')}<td colspan="3" style="border:1px solid #000;padding:2px 4px;">&nbsp;</td></tr>
     </table>
   </td>
 </tr>
@@ -176,7 +176,7 @@ def _render_html(invoice):
 <tr>
   <th class="c" style="width:4%;">Sl No.</th>
   <th class="c" style="width:40%;">Description of Goods</th>
-  <th class="c" style="width:10%;">HSN/SAC</th>
+  <th class="c">HSN/SAC</th>
   <th class="c" style="width:8%;">Quantity</th>
   <th class="c" style="width:9%;">Rate (Incl. of Tax)</th>
   <th class="c" style="width:9%;">Rate</th>
@@ -194,7 +194,7 @@ def _render_html(invoice):
     <td colspan="3"></td>
     <td class="c b">{total_qty}</td>
     <td colspan="3"></td>
-    <td class="r b">&#8377; {_fmt(invoice.total)}</td>
+    <td class="r b">INR {_fmt(invoice.total)}</td>
   </tr>
 </tbody>
 </table>
@@ -216,14 +216,11 @@ def _render_html(invoice):
 <table>
 <thead>
 <tr>
-  <th class="c" rowspan="2">HSN/SAC</th>
-  <th class="c" rowspan="2">Taxable Value</th>
-  <th class="c" colspan="2">IGST</th>
-  <th class="c" rowspan="2">Total Tax Amount</th>
-</tr>
-<tr>
-  <th class="c">Rate</th>
-  <th class="c">Amount</th>
+  <th class="c" style="width:22%;">HSN/SAC</th>
+  <th class="c" style="width:24%;">Taxable Value</th>
+  <th class="c" style="width:14%;">IGST Rate</th>
+  <th class="c" style="width:20%;">IGST Amount</th>
+  <th class="c" style="width:20%;">Total Tax Amount</th>
 </tr>
 </thead>
 <tbody>
@@ -237,7 +234,7 @@ def _render_html(invoice):
   <tr>
     <td class="b">Total</td>
     <td class="r b">{_fmt(invoice.subtotal)}</td>
-    <td></td>
+    <td>&nbsp;</td>
     <td class="r b">{_fmt(invoice.gst_amount)}</td>
     <td class="r b">{_fmt(invoice.gst_amount)}</td>
   </tr>

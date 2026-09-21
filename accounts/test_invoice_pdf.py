@@ -10,6 +10,7 @@ from rest_framework.test import APITestCase
 
 from .files import make_file_url
 from .models import Invoice, InvoiceItem, User
+from .pdf import _render_html
 
 API = '/api/auth'
 
@@ -139,3 +140,18 @@ class InvoicePdfTests(APITestCase):
         self.assertEqual(r.status_code, 200)
         self.assertTrue(self._body(r).startswith(b'%PDF-'))
         self.assertEqual(len(mail.outbox), 1)  # creating still emails the invoice
+
+    # ── template ────────────────────────────────────────────────────────────
+
+    def test_template_avoids_the_rupee_glyph_the_pdf_font_cannot_draw(self):
+        # Helvetica has no U+20B9, so a rupee sign prints as a black box.
+        html = _render_html(self.invoice)
+        self.assertNotIn('&#8377;', html)
+        self.assertNotIn('₹', html)
+        self.assertIn('INR ', html)
+
+    def test_tax_summary_has_no_spanning_cells_that_misalign_the_columns(self):
+        html = _render_html(self.invoice)
+        tax = html[html.index('<!-- Tax Summary -->'):html.index('<!-- Declaration')]
+        self.assertNotIn('rowspan', tax)
+        self.assertNotIn('colspan', tax)

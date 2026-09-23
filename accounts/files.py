@@ -47,6 +47,11 @@ _INLINE_TYPES = {
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
 
+# Types a client sends when it doesn't know the file's type (the mobile app's
+# file picker sends application/octet-stream). They claim nothing, so the
+# extension and magic-byte checks decide.
+_GENERIC_CONTENT_TYPES = {'', 'application/octet-stream', 'binary/octet-stream'}
+
 
 def clean_filename(name: str) -> str:
     """Drop any path, control characters and over-long names."""
@@ -67,7 +72,8 @@ def validate_upload(uploaded_file) -> str | None:
         return 'File too large. Maximum size is 20 MB.'
     ext = os.path.splitext(uploaded_file.name or '')[1].lower()
     rule = _ALLOWED_UPLOADS.get(ext)
-    if rule is None or uploaded_file.content_type not in rule[0]:
+    claimed = (uploaded_file.content_type or '').split(';')[0].strip().lower()
+    if rule is None or (claimed not in rule[0] and claimed not in _GENERIC_CONTENT_TYPES):
         return 'Unsupported file type. Allowed: PDF, DOC, DOCX, JPG, PNG.'
     uploaded_file.seek(0)
     head = uploaded_file.read(8)

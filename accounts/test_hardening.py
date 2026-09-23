@@ -306,6 +306,17 @@ class FileTests(HardeningBase):
         self.assertEqual(r.status_code, 201, r.data)
         self.assertIn('/api/auth/files/', r.data['file_url'])
 
+    def test_upload_with_generic_content_type_is_accepted(self):
+        # The mobile app's file picker sends application/octet-stream.
+        r = self._upload(ctype='application/octet-stream')
+        self.assertEqual(r.status_code, 201, r.data)
+
+    def test_generic_content_type_still_needs_matching_extension_and_bytes(self):
+        for name, content in [('shell.exe', b'MZ\x90\x00'), ('fake.pdf', b'<html>')]:
+            r = self._upload(name, content, 'application/octet-stream')
+            self.assertEqual(r.status_code, 400, name)
+        self.assertEqual(ServiceDocument.objects.count(), 0)
+
     def test_upload_rejects_disallowed_extensions_and_spoofed_content(self):
         cases = [
             ('shell.exe', b'MZ\x90\x00', 'application/pdf'),          # bad extension

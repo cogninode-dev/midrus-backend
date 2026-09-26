@@ -17,3 +17,4 @@ class AccountsConfig(AppConfig):
         connection_created.connect(_set_wal)
 
         from . import signals  # noqa: F401  (registers file-cleanup receivers)
+        from . import checks  # noqa: F401  (registers the deploy sanity checks)

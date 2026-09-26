@@ -141,6 +141,51 @@ class InvoicePdfTests(APITestCase):
         self.assertTrue(self._body(r).startswith(b'%PDF-'))
         self.assertEqual(len(mail.outbox), 1)  # creating still emails the invoice
 
+    def test_customer_and_staff_links_download_the_same_named_pdf(self):
+        """Every place the app gets an invoice link from must really download
+        it: the customer's own list, the admin invoice list, and the admin
+        client page. All three name the file after the invoice number."""
+        staff = User.objects.create_user(
+            's@example.com', 'Pw-staff-123', 'Staff', is_staff=True, is_email_verified=True,
+        )
+        customer_link = self._pdf_url()
+
+        self.client.force_authenticate(staff)
+        admin_link = self.client.get(f'{API}/admin/invoices/').data['results'][0]['pdf_url']
+        client_page = self.client.get(f'{API}/admin/users/{self.owner.pk}/').data
+        client_page_link = client_page['invoices'][0]['pdf_url']
+        self.client.force_authenticate(None)
+
+        expected = self.invoice.invoice_number.replace('/', '-') + '.pdf'
+        for name, link in [
+            ('customer list', customer_link),
+            ('admin invoice list', admin_link),
+            ('admin client page', client_page_link),
+        ]:
+            r = self.client.get(link)  # no login: the signed link is the credential
+            self.assertEqual(r.status_code, 200, name)
+            self.assertEqual(r['Content-Type'], 'application/pdf', name)
+            self.assertTrue(self._body(r).startswith(b'%PDF-'), name)
+            self.assertIn('attachment', r['Content-Disposition'], name)
+            self.assertIn(expected, r['Content-Disposition'], name)
+
+    def test_staff_link_works_for_any_clients_invoice(self):
+        staff = User.objects.create_user(
+            's@example.com', 'Pw-staff-123', 'Staff', is_staff=True, is_email_verified=True,
+        )
+        other_invoice = Invoice.objects.create(user=self.stranger, gst_rate=18)
+        InvoiceItem.objects.create(
+            invoice=other_invoice, service_name='Audit', month=9, year=2026, amount=900,
+        )
+        self.client.force_authenticate(staff)
+        rows = self.client.get(f'{API}/admin/invoices/').data['results']
+        self.client.force_authenticate(None)
+        self.assertEqual({r['id'] for r in rows}, {self.invoice.pk, other_invoice.pk})
+        for row in rows:
+            r = self.client.get(row['pdf_url'])
+            self.assertEqual(r.status_code, 200, row['invoice_number'])
+            self.assertTrue(self._body(r).startswith(b'%PDF-'), row['invoice_number'])
+
     # ── template ────────────────────────────────────────────────────────────
 
     def test_template_avoids_the_rupee_glyph_the_pdf_font_cannot_draw(self):

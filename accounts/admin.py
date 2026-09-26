@@ -401,9 +401,10 @@ class InvoiceAdmin(admin.ModelAdmin):
     form                = InvoiceAdminForm
     autocomplete_fields = ['user']
     inlines             = [InvoiceItemInline]
-    list_display    = ['invoice_number', 'customer_col', 'services_col', 'subtotal_col', 'gst_col', 'total_col', 'created_at']
-    list_filter     = ['gst_rate', 'created_at']
+    list_display    = ['invoice_number', 'customer_col', 'services_col', 'subtotal_col', 'gst_col', 'total_col', 'payment_status', 'created_at']
+    list_filter     = ['payment_status', 'gst_rate', 'created_at']
     search_fields   = ['invoice_number', 'user__email', 'user__name', 'user__company']
+    list_editable   = ['payment_status']
     ordering        = ['-created_at']
 
     class Media:
@@ -422,7 +423,7 @@ class InvoiceAdmin(admin.ModelAdmin):
         })
         billing_section = ('Billing', {
             'description': 'Add service lines in the table below — totals recalculate when you save.',
-            'fields': ('gst_rate', 'subtotal', 'gst_amount', 'total'),
+            'fields': ('gst_rate', 'subtotal', 'gst_amount', 'total', 'payment_status'),
         })
         notes_section = ('Attachment & Notes', {
             'fields': ('uploaded_pdf', 'notes'),

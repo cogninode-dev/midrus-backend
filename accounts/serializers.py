@@ -210,6 +210,7 @@ class BillingInvoiceSerializer(serializers.ModelSerializer):
     items            = InvoiceItemSerializer(many=True, read_only=True)
     uploaded_pdf_url = serializers.SerializerMethodField()
     pdf_url          = serializers.SerializerMethodField()
+    payment_status_label = serializers.CharField(source='get_payment_status_display', read_only=True)
 
     class Meta:
         model  = Invoice
@@ -218,6 +219,7 @@ class BillingInvoiceSerializer(serializers.ModelSerializer):
             'customer', 'customer_email', 'customer_address',
             'customer_gst', 'customer_company', 'customer_phone',
             'items', 'gst_rate', 'subtotal', 'gst_amount', 'total',
+            'payment_status', 'payment_status_label',
             'uploaded_pdf_url', 'pdf_url', 'notes', 'created_at',
         ]
 

@@ -359,6 +359,23 @@ def invoices(request):
     return _invoice_create(request)
 
 
+@api_view(['POST'])
+@permission_classes(STAFF)
+def invoice_payment_status(request, pk):
+    """Staff records the outcome of a customer's UPI payment; the customer
+    sees it on the Payments page."""
+    invoice = get_object_or_404(
+        Invoice.objects.select_related('user').prefetch_related('items'), pk=pk,
+    )
+    new_status = request.data.get('payment_status')
+    valid = {value for value, _ in Invoice.PAYMENT_STATUS_CHOICES}
+    if new_status not in valid:
+        return _err(f'Payment status must be one of: {", ".join(sorted(valid))}.')
+    invoice.payment_status = new_status
+    invoice.save(update_fields=['payment_status'])
+    return Response(_invoice_json(invoice, request))
+
+
 def _dec(value, field, minimum=Decimal('0')):
     try:
         d = Decimal(str(value))

@@ -52,6 +52,7 @@ urlpatterns = [
     path('admin/messages/',                    admin_api.messages,               name='admin-messages'),
     path('admin/messages/<int:pk>/',           admin_api.message_update,         name='admin-message-update'),
     path('admin/invoices/',                    admin_api.invoices,               name='admin-invoices'),
+    path('admin/invoices/<int:pk>/payment-status/', admin_api.invoice_payment_status, name='admin-invoice-payment-status'),
 
     # Self-service password reset
     path('password-reset/',         views.password_reset_request, name='password-reset-request'),

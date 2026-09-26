@@ -134,9 +134,21 @@ class ServiceDocument(models.Model):
 class Invoice(models.Model):
     GST_CHOICES = [(0, '0%'), (5, '5%'), (12, '12%'), (18, '18%')]
 
+    PAYMENT_STATUS_CHOICES = [
+        ('pending',    'Pending'),
+        ('processing', 'Processing'),
+        ('success',    'Success'),
+        ('failed',     'Failed'),
+    ]
+
     invoice_number = models.CharField(max_length=30, unique=True, blank=True)
     user           = models.ForeignKey(User, on_delete=models.CASCADE, related_name='billing_invoices')
     gst_rate       = models.IntegerField(choices=GST_CHOICES, default=18, verbose_name='GST Rate (%)')
+    payment_status = models.CharField(
+        max_length=12, choices=PAYMENT_STATUS_CHOICES, default='pending',
+        db_index=True,
+        help_text='Set by staff once the UPI payment has been checked. Shown to the customer.',
+    )
     subtotal       = models.DecimalField(max_digits=12, decimal_places=2, default=0, editable=False)
     gst_amount     = models.DecimalField(max_digits=12, decimal_places=2, default=0, editable=False)
     total          = models.DecimalField(max_digits=12, decimal_places=2, default=0, editable=False)

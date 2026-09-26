@@ -42,6 +42,7 @@ urlpatterns = [
     # In-app admin panel (staff only)
     path('admin/overview/',                    admin_api.overview,               name='admin-overview'),
     path('admin/users/',                       admin_api.users,                  name='admin-users'),
+    path('admin/users/<int:pk>/',              admin_api.user_detail,            name='admin-user-detail'),
     path('admin/users/<int:pk>/approval/',     admin_api.user_approval,          name='admin-user-approval'),
     path('admin/services/',                    admin_api.services,               name='admin-services'),
     path('admin/services/<int:pk>/',           admin_api.service_update,         name='admin-service-update'),

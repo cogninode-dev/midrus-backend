@@ -191,6 +191,56 @@ def user_approval(request, pk):
     return Response(_user_row(user))
 
 
+@api_view(['GET'])
+@permission_classes(STAFF)
+def user_detail(request, pk):
+    """Everything about one client on a single screen: profile, services with
+    their documents, invoices with payment status, and payment totals."""
+    user = get_object_or_404(
+        User.objects.annotate(services_count=Count('services', distinct=True)),
+        pk=pk, is_staff=False,
+    )
+    services = list(
+        Service.objects.filter(user=user)
+        .select_related('user')
+        .prefetch_related('invoices')  # the related name for a service's documents
+    )
+    invoices = list(
+        Invoice.objects.filter(user=user)
+        .select_related('user')
+        .prefetch_related('items')
+        .order_by('-created_at')
+    )
+
+    def money(statuses):
+        total = sum((i.total for i in invoices if i.payment_status in statuses), Decimal('0'))
+        return f'{total:.2f}'
+
+    documents = 0
+    service_rows = []
+    for svc in services:
+        docs = list(svc.invoices.all())
+        documents += len(docs)
+        service_rows.append({
+            **_service_row(svc),
+            'documents': [_document_row(d, request) for d in docs],
+        })
+
+    return Response({
+        'user': _user_row(user),
+        'summary': {
+            'invoices_count': len(invoices),
+            'billed': money({'pending', 'processing', 'success', 'failed'}),
+            'paid': money({'success'}),
+            'processing': money({'processing'}),
+            'outstanding': money({'pending', 'failed'}),
+            'documents_count': documents,
+        },
+        'services': service_rows,
+        'invoices': [_invoice_json(i, request) for i in invoices],
+    })
+
+
 # ─── services ────────────────────────────────────────────────────────────────
 
 @api_view(['GET'])

@@ -18,6 +18,7 @@ from rest_framework.response import Response
 
 from .emails import send_approved_email, send_invoice_email
 from .files import make_file_url
+from .notifications import notify_invoice_created
 from .models import (
     ContactMessage, Invoice, InvoiceItem, Service, ServiceDocument, User,
 )
@@ -508,6 +509,8 @@ def _invoice_create(request):
     InvoiceItem.objects.bulk_create(items)
     invoice.recalculate()
     invoice.save(update_fields=['subtotal', 'gst_amount', 'total'])
+
+    notify_invoice_created(invoice)
 
     email_sent = True
     try:

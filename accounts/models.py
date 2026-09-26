@@ -247,3 +247,49 @@ class InvoiceItem(models.Model):
     def __str__(self):
         months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
         return f'{self.service_name} ({months[self.month - 1]} {self.year})'
+
+
+class Notification(models.Model):
+    """Something that changed for a customer. Shown by the bell in the app and
+    offered to the push backend when it is created (see notifications.py)."""
+    KIND_CHOICES = [
+        ('invoice',  'Invoice'),
+        ('payment',  'Payment'),
+        ('service',  'Service'),
+        ('document', 'Document'),
+        ('account',  'Account'),
+    ]
+
+    user       = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
+    kind       = models.CharField(max_length=20, choices=KIND_CHOICES)
+    title      = models.CharField(max_length=140)
+    body       = models.CharField(max_length=300, blank=True)
+    # The invoice / service / document this is about, so the app can open it.
+    ref_id     = models.PositiveIntegerField(null=True, blank=True)
+    is_read    = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'notifications'
+        ordering = ['-created_at', '-id']
+        indexes = [models.Index(fields=['user', 'is_read', '-created_at'])]
+
+    def __str__(self):
+        return f'{self.user.email}: {self.title}'
+
+
+class DeviceToken(models.Model):
+    """A phone that can receive push notifications for a user."""
+    PLATFORM_CHOICES = [('android', 'Android'), ('ios', 'iOS')]
+
+    user       = models.ForeignKey(User, on_delete=models.CASCADE, related_name='device_tokens')
+    token      = models.CharField(max_length=512, unique=True)
+    platform   = models.CharField(max_length=10, choices=PLATFORM_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'device_tokens'
+
+    def __str__(self):
+        return f'{self.user.email} ({self.platform})'

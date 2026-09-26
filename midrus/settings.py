@@ -236,3 +236,8 @@ LOGGING = {
         'accounts': {'level': 'INFO', 'handlers': ['console'], 'propagate': False},
     },
 }
+
+# ─── Push notifications ──────────────────────────────────────────────────────
+# Dotted path of a class in the style of accounts.push.PushBackend. The default
+# only logs, so nothing is sent until a real backend (e.g. Firebase) is added.
+PUSH_BACKEND = config('PUSH_BACKEND', default='accounts.push.LoggingPushBackend')

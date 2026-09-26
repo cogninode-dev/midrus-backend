@@ -1,6 +1,6 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
-from . import views, admin_api, files, account
+from . import views, admin_api, notification_api, files, account
 
 urlpatterns = [
     # Signed, expiring file downloads (uploads are never served from /media/)
@@ -54,6 +54,13 @@ urlpatterns = [
     path('admin/messages/<int:pk>/',           admin_api.message_update,         name='admin-message-update'),
     path('admin/invoices/',                    admin_api.invoices,               name='admin-invoices'),
     path('admin/invoices/<int:pk>/payment-status/', admin_api.invoice_payment_status, name='admin-invoice-payment-status'),
+
+    # Notifications (the signed-in customer's own) and push device registration
+    path('notifications/',                    notification_api.notification_list,         name='notification-list'),
+    path('notifications/unread-count/',       notification_api.notification_unread_count, name='notification-unread-count'),
+    path('notifications/read-all/',           notification_api.notification_read_all,     name='notification-read-all'),
+    path('notifications/<int:pk>/read/',      notification_api.notification_read,         name='notification-read'),
+    path('devices/',                          notification_api.device,                    name='device'),
 
     # Self-service password reset
     path('password-reset/',         views.password_reset_request, name='password-reset-request'),

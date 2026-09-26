@@ -8,8 +8,9 @@ from django.shortcuts import redirect, get_object_or_404
 from django.urls import path, reverse
 from django.utils.html import format_html, mark_safe
 
-from .models import User, Service, ServiceDocument, ContactMessage, Invoice, InvoiceItem
+from .models import User, Service, ServiceDocument, ContactMessage, Invoice, InvoiceItem, Notification
 from .emails import send_approved_email, send_invoice_email
+from .notifications import notify_invoice_created
 from .files import safe_file_response
 
 admin.site.site_header = 'MIDRUS Administration'
@@ -470,6 +471,7 @@ class InvoiceAdmin(admin.ModelAdmin):
         obj.save(update_fields=['subtotal', 'gst_amount', 'total'])
 
         if not change:
+            notify_invoice_created(obj)
             try:
                 from .pdf import generate_invoice_pdf
                 if obj.uploaded_pdf:
@@ -582,3 +584,12 @@ class ContactMessageAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return False
+
+
+@admin.register(Notification)
+class NotificationAdmin(admin.ModelAdmin):
+    list_display  = ['created_at', 'user', 'kind', 'title', 'is_read']
+    list_filter   = ['kind', 'is_read']
+    search_fields = ['user__email', 'user__name', 'title']
+    ordering      = ['-created_at']
+    readonly_fields = ['created_at']

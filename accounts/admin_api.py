@@ -140,6 +140,7 @@ def overview(request):
         ).count(),
         'messages_unread': ContactMessage.objects.filter(is_read=False).count(),
         'invoices_total': Invoice.objects.count(),
+        'invoices_unpaid': Invoice.objects.filter(payment_status='pending').count(),
     })
 
 
@@ -347,6 +348,9 @@ def _invoice_json(invoice, request):
 def invoices(request):
     if request.method == 'GET':
         qs = Invoice.objects.select_related('user').prefetch_related('items')
+        payment = request.GET.get('payment_status', 'all')
+        if payment in {value for value, _ in Invoice.PAYMENT_STATUS_CHOICES}:
+            qs = qs.filter(payment_status=payment)
         q = request.GET.get('q', '').strip()
         if q:
             qs = qs.filter(

@@ -73,3 +73,23 @@ class InvoicePaymentStatusTests(APITestCase):
         r = self.client.post(f'{API}/admin/invoices/999999/payment-status/',
                              {'payment_status': 'success'}, format='json')
         self.assertEqual(r.status_code, 404)
+
+    def test_staff_can_filter_invoices_by_payment_status(self):
+        paid = Invoice.objects.create(user=self.other, gst_rate=18, payment_status='success')
+        self.client.force_authenticate(self.admin)
+        url = f'{API}/admin/invoices/'
+        ids = lambda r: {row['id'] for row in r.json()['results']}
+        self.assertEqual(ids(self.client.get(url)), {self.invoice.pk, paid.pk})
+        self.assertEqual(ids(self.client.get(url, {'payment_status': 'all'})), {self.invoice.pk, paid.pk})
+        self.assertEqual(ids(self.client.get(url, {'payment_status': 'pending'})), {self.invoice.pk})
+        self.assertEqual(ids(self.client.get(url, {'payment_status': 'success'})), {paid.pk})
+        self.assertEqual(ids(self.client.get(url, {'payment_status': 'failed'})), set())
+        # Unknown values are ignored rather than hiding everything.
+        self.assertEqual(ids(self.client.get(url, {'payment_status': 'bogus'})), {self.invoice.pk, paid.pk})
+
+    def test_overview_counts_unpaid_invoices(self):
+        Invoice.objects.create(user=self.other, gst_rate=18, payment_status='success')
+        self.client.force_authenticate(self.admin)
+        data = self.client.get(f'{API}/admin/overview/').json()
+        self.assertEqual(data['invoices_total'], 2)
+        self.assertEqual(data['invoices_unpaid'], 1)

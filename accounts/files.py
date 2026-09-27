@@ -8,6 +8,7 @@ executing anything an attacker managed to upload.
 import logging
 import os
 import re
+import zipfile
 
 from django.conf import settings
 from django.core import signing
@@ -35,7 +36,19 @@ _ALLOWED_UPLOADS = {
         {'application/vnd.openxmlformats-officedocument.wordprocessingml.document'},
         (b'PK\x03\x04',),
     ),
+    # Spreadsheets. .xls shares the old Office signature with .doc; .xlsx is a
+    # zip that must really hold a workbook (see _looks_like_xlsx); .csv has no
+    # signature at all, so it is checked to be plain text (see _looks_like_text).
+    '.xls':  ({'application/vnd.ms-excel'}, (b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1',)),
+    '.xlsx': (
+        {'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},
+        (b'PK\x03\x04',),
+    ),
+    # Windows/Excel often report a CSV as application/vnd.ms-excel.
+    '.csv':  ({'text/csv', 'application/csv', 'application/vnd.ms-excel', 'text/plain'}, ()),
 }
+
+UPLOAD_TYPES_LABEL = 'PDF, DOC, DOCX, XLS, XLSX, CSV, JPG, PNG'
 
 # Types that are safe to render inline in a browser.
 _INLINE_TYPES = {
@@ -61,6 +74,33 @@ def clean_filename(name: str) -> str:
     return (stem[:200] + ext[:20]) if name else ''
 
 
+# Control characters that never appear in text (tab, CR and LF are fine).
+_BINARY_BYTES = bytes(set(range(0x00, 0x20)) - {0x09, 0x0A, 0x0D})
+
+
+def _looks_like_text(uploaded_file) -> bool:
+    """A CSV has no magic bytes, so insist on plain text: no NULs or other
+    control characters in the first 8 KB. Rules out executables and other
+    binaries renamed to .csv."""
+    uploaded_file.seek(0)
+    sample = uploaded_file.read(8192)
+    uploaded_file.seek(0)
+    return sample.translate(None, _BINARY_BYTES) == sample
+
+
+def _looks_like_xlsx(uploaded_file) -> bool:
+    """A real workbook is a zip with xl/workbook.xml. Only the zip's index is
+    read (nothing is decompressed), so it is cheap and safe."""
+    uploaded_file.seek(0)
+    try:
+        with zipfile.ZipFile(uploaded_file) as z:
+            return 'xl/workbook.xml' in z.namelist()
+    except (zipfile.BadZipFile, OSError, ValueError):
+        return False
+    finally:
+        uploaded_file.seek(0)
+
+
 def validate_upload(uploaded_file) -> str | None:
     """Return an error message for a bad upload, or None if it looks fine.
 
@@ -70,15 +110,23 @@ def validate_upload(uploaded_file) -> str | None:
     """
     if uploaded_file.size > MAX_UPLOAD_BYTES:
         return 'File too large. Maximum size is 20 MB.'
+    if uploaded_file.size == 0:
+        return 'The file is empty.'
     ext = os.path.splitext(uploaded_file.name or '')[1].lower()
     rule = _ALLOWED_UPLOADS.get(ext)
     claimed = (uploaded_file.content_type or '').split(';')[0].strip().lower()
     if rule is None or (claimed not in rule[0] and claimed not in _GENERIC_CONTENT_TYPES):
-        return 'Unsupported file type. Allowed: PDF, DOC, DOCX, JPG, PNG.'
-    uploaded_file.seek(0)
-    head = uploaded_file.read(8)
-    uploaded_file.seek(0)
-    if not any(head.startswith(magic) for magic in rule[1]):
+        return f'Unsupported file type. Allowed: {UPLOAD_TYPES_LABEL}.'
+    if ext == '.csv':
+        ok = _looks_like_text(uploaded_file)
+    else:
+        uploaded_file.seek(0)
+        head = uploaded_file.read(8)
+        uploaded_file.seek(0)
+        ok = any(head.startswith(magic) for magic in rule[1])
+        if ok and ext == '.xlsx':
+            ok = _looks_like_xlsx(uploaded_file)
+    if not ok:
         return 'The file content does not match its type.'
     return None
 

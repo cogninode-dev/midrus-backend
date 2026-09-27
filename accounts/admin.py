@@ -3,6 +3,7 @@ import os
 from django import forms
 from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.core.exceptions import PermissionDenied
 from django.http import FileResponse, Http404
 from django.shortcuts import redirect, get_object_or_404
 from django.urls import path, reverse
@@ -402,7 +403,7 @@ class InvoiceAdmin(admin.ModelAdmin):
     form                = InvoiceAdminForm
     autocomplete_fields = ['user']
     inlines             = [InvoiceItemInline]
-    list_display    = ['invoice_number', 'customer_col', 'services_col', 'subtotal_col', 'gst_col', 'total_col', 'payment_status', 'created_at']
+    list_display    = ['invoice_number', 'customer_col', 'services_col', 'subtotal_col', 'gst_col', 'total_col', 'payment_status', 'pdf_col', 'created_at']
     list_filter     = ['payment_status', 'gst_rate', 'created_at']
     search_fields   = ['invoice_number', 'user__email', 'user__name', 'user__company']
     list_editable   = ['payment_status']
@@ -412,7 +413,7 @@ class InvoiceAdmin(admin.ModelAdmin):
         js = ('accounts/js/invoice_lookup.js',)
 
     def get_readonly_fields(self, request, obj=None):
-        base = ['subtotal', 'gst_amount', 'total', 'created_at', 'customer_info']
+        base = ['subtotal', 'gst_amount', 'total', 'created_at', 'customer_info', 'pdf_link']
         if obj is None:
             base.append('invoice_number')  # auto-generated on add; editable on change form
         return base
@@ -450,7 +451,7 @@ class InvoiceAdmin(admin.ModelAdmin):
                 'fields': ('user', 'customer_info'),
             }),
             ('Invoice Reference', {
-                'fields': (('invoice_number', 'created_at'),),
+                'fields': (('invoice_number', 'created_at'), 'pdf_link'),
             }),
             address_section,
             billing_section,
@@ -518,6 +519,38 @@ class InvoiceAdmin(admin.ModelAdmin):
     @admin.display(description='Total')
     def total_col(self, obj):
         return format_html('<strong style="font-family:monospace">₹ {}</strong>', f'{obj.total:,.2f}')
+
+    # ── PDF download ─────────────────────────────────────────────────────────
+
+    def get_urls(self):
+        custom = [
+            path('<int:pk>/pdf/', self.admin_site.admin_view(self._pdf_view), name='accounts_invoice_pdf'),
+        ]
+        return custom + super().get_urls()
+
+    def _pdf_view(self, request, pk):
+        """Download an invoice as a PDF: the uploaded file if there is one,
+        otherwise generated from the invoice. Staff with view access only."""
+        if not self.has_view_permission(request):
+            raise PermissionDenied
+        from .files import _invoice_pdf_response
+        return _invoice_pdf_response(pk)
+
+    @admin.display(description='PDF')
+    def pdf_col(self, obj):
+        return format_html(
+            '<a href="{}" style="color:#388e3c;font-weight:600;white-space:nowrap">⬇ PDF</a>',
+            reverse('admin:accounts_invoice_pdf', args=[obj.pk]),
+        )
+
+    @admin.display(description='Invoice PDF')
+    def pdf_link(self, obj):
+        if not obj or not obj.pk:
+            return mark_safe('<span style="color:#9ca3af;font-style:italic;">Available after you save.</span>')
+        return format_html(
+            '<a href="{}" style="color:#388e3c;font-weight:600">⬇ Download PDF</a>',
+            reverse('admin:accounts_invoice_pdf', args=[obj.pk]),
+        )
 
     # ── Readonly detail ───────────────────────────────────────────────────────
 

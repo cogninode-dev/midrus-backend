@@ -1,9 +1,13 @@
+import base64
+import email.policy
 import secrets
 from datetime import date
+from functools import lru_cache
+from pathlib import Path
 from urllib.parse import quote
 
-from django.core.mail import send_mail, EmailMultiAlternatives
 from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
 from django.utils.html import escape as esc
 
 SUPPORT_EMAIL = 'info@midrusindia.com'
@@ -19,6 +23,81 @@ CANVAS = '#F3F2FA'
 TINT = '#F0EEFF'
 CYAN = '#4CC9F0'
 FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif"
+
+
+# ── Logo ────────────────────────────────────────────────────────────────────
+# The logo travels inside the email (an inline image the HTML points at with
+# cid:), so it shows in Gmail, Outlook and Apple Mail without the reader
+# having to "load images" and without depending on the server being reachable.
+
+LOGO_CID = 'midrus-logo'
+_LOGO_PATH = Path(__file__).resolve().parent / 'static' / 'accounts' / 'img' / 'email-logo.png'
+
+
+@lru_cache(maxsize=1)
+def _logo_bytes() -> bytes | None:
+    try:
+        return _LOGO_PATH.read_bytes()
+    except OSError:
+        return None  # the header falls back to a lettermark; emails still send
+
+
+def logo_data_uri() -> str | None:
+    """The logo as a data: URI, for previewing an email in a browser (mail
+    clients need the cid: form used in real messages)."""
+    data = _logo_bytes()
+    return f'data:image/png;base64,{base64.b64encode(data).decode()}' if data else None
+
+
+def _logo_tile() -> str:
+    """The logo on a white tile, as it appears in the header."""
+    if _logo_bytes():
+        inner = (f'<img src="cid:{LOGO_CID}" width="38" alt="MIDRUS" '
+                 'style="display:block;width:38px;height:auto;border:0;outline:none;text-decoration:none;">')
+        pad = 'padding:9px 9px;'
+    else:
+        inner = f'<span style="font-family:{FONT};font-size:24px;font-weight:800;color:{BRAND};line-height:56px;">M</span>'
+        pad = ''
+    return (f'<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+            f'<td width="56" height="56" align="center" bgcolor="#ffffff" '
+            f'style="width:56px;height:56px;background:#ffffff;border-radius:16px;{pad}">{inner}</td>'
+            f'</tr></table>')
+
+
+class _MidrusEmail(EmailMultiAlternatives):
+    """An email whose HTML can point at inline images.
+
+    The images are attached to the HTML part itself (multipart/related), which
+    is the structure mail clients expect. Real attachments, such as an invoice
+    PDF, stay at the top level so they still show as attachments.
+    """
+    inline_images: tuple[tuple[str, bytes], ...] = ()
+
+    def message(self, *, policy=email.policy.default):
+        msg = super().message(policy=policy)
+        if self.inline_images:
+            html = msg.get_body(preferencelist=('html',))
+            for cid, data in self.inline_images:
+                html.add_related(
+                    data, 'image', 'png',
+                    cid=f'<{cid}>', disposition='inline', filename=f'{cid}.png',
+                )
+        return msg
+
+
+def _send(subject: str, text: str, html: str, to: list[str], *,
+          fail_silently: bool = False, pdf: tuple[str, bytes] | None = None) -> None:
+    """Send one branded email (text + HTML + inline logo, optional PDF)."""
+    email = _MidrusEmail(
+        subject=subject, body=text, from_email=settings.DEFAULT_FROM_EMAIL, to=to,
+    )
+    email.attach_alternative(html, 'text/html')
+    logo = _logo_bytes()
+    if logo and f'cid:{LOGO_CID}' in html:
+        email.inline_images = ((LOGO_CID, logo),)
+    if pdf:
+        email.attach(pdf[0], pdf[1], 'application/pdf')
+    email.send(fail_silently=fail_silently)
 
 
 def generate_otp(user):
@@ -68,16 +147,11 @@ def _base(content: str, preheader: str = '') -> str:
     <tr><td class="px" align="center" bgcolor="{BRAND}"
         style="background:{BRAND};background-image:linear-gradient(135deg,#7A5CFF 0%,{BRAND} 48%,{BRAND_DARK} 100%);
                border-radius:20px 20px 0 0;padding:34px 32px 30px;font-family:{FONT};">
-      <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
-        <td style="vertical-align:middle;padding-right:10px;">
-          <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
-            <td width="34" height="34" align="center" style="width:34px;height:34px;background:#ffffff;border-radius:10px;
-                font-family:{FONT};font-size:19px;font-weight:800;color:{BRAND};line-height:34px;">M</td>
-          </tr></table>
-        </td>
-        <td style="vertical-align:middle;font-family:{FONT};font-size:24px;font-weight:800;letter-spacing:3px;color:#ffffff;">MIDRUS</td>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center"><tr>
+        <td style="vertical-align:middle;padding-right:14px;">{_logo_tile()}</td>
+        <td style="vertical-align:middle;font-family:{FONT};font-size:28px;font-weight:800;letter-spacing:4px;color:#ffffff;">MIDRUS</td>
       </tr></table>
-      <p style="margin:10px 0 0;font-family:{FONT};font-size:13px;letter-spacing:.4px;color:#D9D3FF;">Accounting, Tax &amp; Compliance</p>
+      <p style="margin:14px 0 0;font-family:{FONT};font-size:13px;letter-spacing:.5px;color:#D9D3FF;">Accounting, Tax &amp; Compliance</p>
     </td></tr>
 
     <!-- Accent line -->
@@ -192,12 +266,11 @@ def send_otp_email(user, otp: str) -> None:
         + '<div style="height:16px;line-height:16px;">&nbsp;</div>'
         + _fineprint("If you didn't create a MIDRUS account, you can safely ignore this email.")
     )
-    send_mail(
-        subject='Verify your MIDRUS account — OTP inside',
-        message=f'Your MIDRUS verification OTP is: {otp}\n\nIt expires in 10 minutes.',
-        html_message=_base(body, f'Your MIDRUS verification code is {otp}'),
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[user.email],
+    _send(
+        'Verify your MIDRUS account — OTP inside',
+        f'Your MIDRUS verification OTP is: {otp}\n\nIt expires in 10 minutes.',
+        _base(body, f'Your MIDRUS verification code is {otp}'),
+        [user.email],
         fail_silently=False,
     )
 
@@ -212,12 +285,11 @@ def send_login_otp_email(user, otp: str) -> None:
         + _fineprint("If this wasn't you, ignore this email — your account stays secure. "
                      "Consider changing your password if you keep receiving these.")
     )
-    send_mail(
-        subject='MIDRUS login OTP',
-        message=f'Your MIDRUS login OTP is: {otp}\n\nIt expires in 10 minutes.',
-        html_message=_base(body, f'Your MIDRUS sign-in code is {otp}'),
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[user.email],
+    _send(
+        'MIDRUS login OTP',
+        f'Your MIDRUS login OTP is: {otp}\n\nIt expires in 10 minutes.',
+        _base(body, f'Your MIDRUS sign-in code is {otp}'),
+        [user.email],
         fail_silently=False,
     )
 
@@ -232,12 +304,11 @@ def send_password_reset_email(user, otp: str) -> None:
         + '<div style="height:16px;line-height:16px;">&nbsp;</div>'
         + _fineprint("If you didn't request a reset, ignore this email — your password won't change.")
     )
-    send_mail(
-        subject='MIDRUS — Password reset OTP',
-        message=f'Your MIDRUS password reset OTP is: {otp}\n\nIt expires in 10 minutes.',
-        html_message=_base(body, f'Your MIDRUS password reset code is {otp}'),
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[user.email],
+    _send(
+        'MIDRUS — Password reset OTP',
+        f'Your MIDRUS password reset OTP is: {otp}\n\nIt expires in 10 minutes.',
+        _base(body, f'Your MIDRUS password reset code is {otp}'),
+        [user.email],
         fail_silently=False,
     )
 
@@ -258,12 +329,11 @@ def send_admin_signup_notification(user) -> None:
     admin_email = getattr(settings, 'ADMIN_EMAIL', settings.EMAIL_HOST_USER)
     if not admin_email:
         return
-    send_mail(
-        subject=f'MIDRUS — New signup: {user.name} ({user.email})',
-        message=f'New user signed up: {user.name} ({user.email}). Review in admin panel.',
-        html_message=_base(body, f'{user.name} ({user.email}) is waiting for approval'),
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[admin_email],
+    _send(
+        f'MIDRUS — New signup: {user.name} ({user.email})',
+        f'New user signed up: {user.name} ({user.email}). Review in admin panel.',
+        _base(body, f'{user.name} ({user.email}) is waiting for approval'),
+        [admin_email],
         fail_silently=True,
     )
 
@@ -340,19 +410,13 @@ def send_invoice_email(invoice, pdf_bytes: bytes | None = None) -> None:
         f'View & pay: {payment_url}'
     )
 
-    email = EmailMultiAlternatives(
-        subject=f'MIDRUS Invoice {invoice.invoice_number} — ₹{float(invoice.total):,.2f}',
-        body=plain,
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        to=[user.email],
-    )
-    email.attach_alternative(
+    _send(
+        f'MIDRUS Invoice {invoice.invoice_number} — ₹{float(invoice.total):,.2f}',
+        plain,
         _base(body, f'Invoice {invoice.invoice_number} — ₹{float(invoice.total):,.2f} due'),
-        'text/html',
+        [user.email],
+        pdf=(f'{invoice.invoice_number}.pdf', pdf_bytes) if pdf_bytes else None,
     )
-    if pdf_bytes:
-        email.attach(f'{invoice.invoice_number}.pdf', pdf_bytes, 'application/pdf')
-    email.send(fail_silently=False)
 
 
 def send_account_deleted_email(email: str, name: str) -> None:
@@ -367,13 +431,12 @@ def send_account_deleted_email(email: str, name: str) -> None:
         + '<div style="height:16px;line-height:16px;">&nbsp;</div>'
         + _fineprint('Thank you for using MIDRUS. You are always welcome to sign up again.')
     )
-    send_mail(
-        subject='MIDRUS — Your account has been deleted',
-        message=f'Hi {name}, your MIDRUS account and personal details have been deleted. '
+    _send(
+        'MIDRUS — Your account has been deleted',
+        f'Hi {name}, your MIDRUS account and personal details have been deleted. '
                 f'If you did not request this, contact {SUPPORT_EMAIL} immediately.',
-        html_message=_base(body, 'Your MIDRUS account and personal details have been deleted'),
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[email],
+        _base(body, 'Your MIDRUS account and personal details have been deleted'),
+        [email],
         fail_silently=True,
     )
 
@@ -394,11 +457,10 @@ def send_approved_email(user) -> None:
         + f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 26px;">{perks}</table>'
         + _button(login_url, 'Log in to your dashboard &rarr;')
     )
-    send_mail(
-        subject='MIDRUS — Your account has been approved!',
-        message=f'Hi {user.name}, your MIDRUS account has been approved. Log in at: {login_url}',
-        html_message=_base(body, 'Your MIDRUS account is approved — log in to get started'),
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[user.email],
+    _send(
+        'MIDRUS — Your account has been approved!',
+        f'Hi {user.name}, your MIDRUS account has been approved. Log in at: {login_url}',
+        _base(body, 'Your MIDRUS account is approved — log in to get started'),
+        [user.email],
         fail_silently=True,
     )

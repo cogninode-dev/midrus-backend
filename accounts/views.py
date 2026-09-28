@@ -98,7 +98,8 @@ def resend_otp(request):
     try:
         otp = generate_otp(user)
         send_otp_email(user, otp)
-    except Exception:
+    except Exception as exc:
+        logger.error('Failed to resend verification OTP to %s: %s', user.email, exc)
         return Response({'error': 'Failed to send email. Please try again.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
     return Response({'message': 'New OTP sent to your email.'})
 
@@ -114,7 +115,8 @@ def login(request):
     try:
         otp = generate_otp(user)
         send_login_otp_email(user, otp)
-    except Exception:
+    except Exception as exc:
+        logger.error('Failed to send login OTP to %s: %s', user.email, exc)
         return Response(
             {'error': 'Failed to send OTP email. Please try again.'},
             status=status.HTTP_503_SERVICE_UNAVAILABLE,

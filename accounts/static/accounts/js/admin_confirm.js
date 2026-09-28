@@ -3,6 +3,31 @@
 
   var _pendingUrl = null;
 
+  function csrfToken() {
+    var m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  // These admin actions mutate data, so they must go through POST (with a
+  // CSRF token) rather than a plain GET link — a GET is not protected by
+  // Django's CSRF middleware and a crafted link could trigger the action
+  // just from an admin clicking it. This builds a real (invisible) form and
+  // submits it, so the browser navigates exactly like the old GET link did
+  // (redirects and file downloads both still work).
+  window.adminPost = function (url) {
+    var form = document.createElement('form');
+    form.method = 'POST';
+    form.action = url;
+    form.style.display = 'none';
+    var input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'csrfmiddlewaretoken';
+    input.value = csrfToken();
+    form.appendChild(input);
+    document.body.appendChild(form);
+    form.submit();
+  };
+
   var TYPES = {
     approve: { icon: '✅', label: 'Yes, Approve', bg: '#16a34a' },
     reject:  { icon: '🚫', label: 'Yes, Reject',  bg: '#dc2626' },
@@ -58,7 +83,7 @@
     btn.style.background  = t.bg;
     old.parentNode.replaceChild(btn, old);
     btn.addEventListener('click', function () {
-      if (_pendingUrl) window.location.href = _pendingUrl;
+      if (_pendingUrl) window.adminPost(_pendingUrl);
       close();
     });
   }

@@ -2,7 +2,6 @@
 import io
 import tempfile
 from datetime import timedelta
-from pathlib import Path
 from smtplib import SMTPException
 from unittest import mock
 
@@ -348,13 +347,13 @@ class FileTests(HardeningBase):
         self.assertEqual(r.status_code, 201, r.data)
         self.assertTrue(r.data['is_reupload'])
 
-    def test_deleting_a_document_removes_the_file_from_disk(self):
+    def test_deleting_a_document_removes_the_file_from_storage(self):
         doc = self._doc()
-        path = Path(doc.file.path)
-        self.assertTrue(path.exists())
+        storage, name = doc.file.storage, doc.file.name
+        self.assertTrue(storage.exists(name))
         with self.captureOnCommitCallbacks(execute=True):
             doc.delete()
-        self.assertFalse(path.exists())
+        self.assertFalse(storage.exists(name))
 
 
 # ─── Invoices ────────────────────────────────────────────────────────────────

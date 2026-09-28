@@ -1,21 +1,46 @@
 import datetime
+import functools
+import logging
 import os
 from django import forms
 from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from django.http import FileResponse, Http404
+from django.core.exceptions import PermissionDenied
+from django.http import FileResponse, Http404, HttpResponseNotAllowed
 from django.shortcuts import redirect, get_object_or_404
 from django.urls import path, reverse
-from django.utils.html import format_html, mark_safe
+from django.utils.html import escape, format_html, mark_safe
 
 from .models import User, Service, ServiceDocument, ContactMessage, Invoice, InvoiceItem, Notification
 from .emails import send_approved_email, send_invoice_email
 from .notifications import notify_invoice_created
 from .files import safe_file_response
 
+logger = logging.getLogger(__name__)
+
 admin.site.site_header = 'MIDRUS Administration'
 admin.site.site_title  = 'MIDRUS Admin'
 admin.site.index_title = 'Dashboard'
+
+
+def post_only_change_action(view):
+    """These custom admin URLs mutate data (approve/reject/mark-downloaded), so
+    they must never be a plain GET link: Django's CSRF middleware doesn't
+    protect GET, and a browser still sends session cookies for a top-level GET
+    navigation under SameSite=Lax — so a crafted link an admin merely clicks
+    could silently approve/reject a user or document. Requiring POST puts them
+    behind the normal CSRF-token check, and this also confirms the admin has
+    change permission on the model (the raw admin_view() staff gate alone
+    doesn't check per-model permissions).
+    """
+    @functools.wraps(view)
+    def wrapper(self, request, *args, **kwargs):
+        if request.method != 'POST':
+            return HttpResponseNotAllowed(['POST'])
+        if not self.has_change_permission(request):
+            raise PermissionDenied
+        return view(self, request, *args, **kwargs)
+    return wrapper
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -36,6 +61,11 @@ class InvoiceInline(admin.TabularInline):
     readonly_fields     = ['uploaded_at', 'reupload_badge', 'download_link']
     fields              = ['file_name', 'file', 'status', 'uploaded_at', 'reupload_badge', 'download_link']
 
+    class Media:
+        # download_link()'s Download button posts via adminPost() (see admin.py's
+        # post_only_change_action / admin_confirm.js for why it isn't a GET link).
+        js = ('accounts/js/admin_confirm.js',)
+
     @admin.display(description='Re-upload')
     def reupload_badge(self, obj):
         return mark_safe(_reupload_badge_html(obj.is_reupload))
@@ -47,7 +77,7 @@ class InvoiceInline(admin.TabularInline):
             dl_url   = reverse('admin:accounts_doc_download', args=[obj.pk])
             return format_html(
                 '<a href="{}" target="_blank" rel="noopener noreferrer" style="color:#1976d2;font-weight:600;margin-right:10px">👁 View</a>'
-                '<a href="{}" style="color:#388e3c;font-weight:600">⬇ Download</a>',
+                '<a href="#" onclick="adminPost(\'{}\');return false;" style="color:#388e3c;font-weight:600">⬇ Download</a>',
                 view_url, dl_url,
             )
         return mark_safe('<span style="color:#aaa;font-size:12px">No file</span>')
@@ -99,6 +129,7 @@ class UserAdmin(BaseUserAdmin):
         ]
         return custom + super().get_urls()
 
+    @post_only_change_action
     def _approve_view(self, request, pk):
         user = get_object_or_404(User, pk=pk)
         if not user.is_staff:
@@ -107,10 +138,11 @@ class UserAdmin(BaseUserAdmin):
             try:
                 send_approved_email(user)
             except Exception:
-                pass
+                logger.warning('Approval email to %s failed.', user.email, exc_info=True)
             self.message_user(request, f'✔ {user.name} ({user.email}) approved and notified.', messages.SUCCESS)
         return redirect(reverse('admin:accounts_user_changelist'))
 
+    @post_only_change_action
     def _reject_view(self, request, pk):
         user = get_object_or_404(User, pk=pk)
         if not user.is_staff:
@@ -240,6 +272,7 @@ class DocumentAdmin(admin.ModelAdmin):
         response['X-Frame-Options'] = 'SAMEORIGIN'  # the admin viewer iframes this
         return response
 
+    @post_only_change_action
     def _mark_download_view(self, request, pk):
         doc = get_object_or_404(ServiceDocument, pk=pk)
         if not doc.file:
@@ -250,6 +283,7 @@ class DocumentAdmin(admin.ModelAdmin):
         filename = doc.file_name or os.path.basename(doc.file.name)
         return FileResponse(doc.file.open('rb'), as_attachment=True, filename=filename)
 
+    @post_only_change_action
     def _reject_view(self, request, pk):
         doc = get_object_or_404(ServiceDocument, pk=pk)
         doc.status = 'rejected'
@@ -257,6 +291,7 @@ class DocumentAdmin(admin.ModelAdmin):
         messages.warning(request, f'Document "{doc.file_name}" has been rejected.')
         return redirect(reverse('admin:accounts_servicedocument_changelist'))
 
+    @post_only_change_action
     def _restore_view(self, request, pk):
         doc = get_object_or_404(ServiceDocument, pk=pk)
         doc.status = 'active'
@@ -307,12 +342,12 @@ class DocumentAdmin(admin.ModelAdmin):
         )
         if obj.is_downloaded:
             dl_link = format_html(
-                '<a href="{}" style="{}color:#fff;background:#16a34a">🔄 Re-download</a>',
+                '<a href="#" onclick="adminPost(\'{}\');return false;" style="{}color:#fff;background:#16a34a">🔄 Re-download</a>',
                 download_url, s,
             )
         else:
             dl_link = format_html(
-                '<a href="{}" style="{}color:#fff;background:#2563eb">⬇ Download</a>',
+                '<a href="#" onclick="adminPost(\'{}\');return false;" style="{}color:#fff;background:#2563eb">⬇ Download</a>',
                 download_url, s,
             )
         return format_html('{}{}', view_link, dl_link)
@@ -529,16 +564,20 @@ class InvoiceAdmin(admin.ModelAdmin):
                 'Select a customer above ↑ — details appear here after you save.'
                 '</span>'
             )
+        # Every field here is customer-editable (profile update), so it must be
+        # escaped before going into HTML — otherwise a name/address containing
+        # a <script> tag runs in the admin's browser the next time this invoice
+        # is opened (stored XSS).
         u     = obj.user
-        lines = [f'<strong>{u.name}</strong>']
+        lines = [f'<strong>{escape(u.name)}</strong>']
         if u.company:
-            lines.append(u.company)
+            lines.append(escape(u.company))
         if u.gst_number:
-            lines.append(f'GSTIN: <strong>{u.gst_number}</strong>')
+            lines.append(f'GSTIN: <strong>{escape(u.gst_number)}</strong>')
         if u.address:
-            lines.append(u.address.replace('\n', '<br>'))
+            lines.append(escape(u.address).replace('\n', '<br>'))
         if u.phone:
-            lines.append(f'📞 {u.phone}')
+            lines.append(f'📞 {escape(u.phone)}')
         return mark_safe(
             '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;'
             'padding:10px 14px;line-height:1.9;font-size:13px;margin-top:4px;">'

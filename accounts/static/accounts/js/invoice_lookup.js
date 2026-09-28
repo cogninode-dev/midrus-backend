@@ -3,6 +3,16 @@
 
   var $preview = null;
 
+  // Every field in the lookup response is customer-editable (profile update),
+  // so it must be escaped before going into innerHTML — otherwise a name or
+  // address containing a <script> tag runs in the admin's browser as soon as
+  // they pick that customer (stored XSS).
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
   function insertPreview() {
     // Insert preview div after the .field-user row
     var $userField = $('.field-user');
@@ -34,11 +44,11 @@
       .done(function (data) {
         if (!$preview) return;
         if (data.found) {
-          var lines = ['<strong style="color:#166534;">&#10003; ' + data.name + '</strong>'];
-          if (data.company)    lines.push(data.company);
-          if (data.gst_number) lines.push('GSTIN: <strong>' + data.gst_number + '</strong>');
-          if (data.address)    lines.push(data.address.replace(/\n/g, '<br>'));
-          if (data.phone)      lines.push('&#128222; ' + data.phone);
+          var lines = ['<strong style="color:#166534;">&#10003; ' + esc(data.name) + '</strong>'];
+          if (data.company)    lines.push(esc(data.company));
+          if (data.gst_number) lines.push('GSTIN: <strong>' + esc(data.gst_number) + '</strong>');
+          if (data.address)    lines.push(esc(data.address).replace(/\n/g, '<br>'));
+          if (data.phone)      lines.push('&#128222; ' + esc(data.phone));
           $preview.html(
             '<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:6px;' +
             'padding:10px 14px;line-height:1.8;">' +

@@ -34,6 +34,52 @@ class LoggingPushBackend(PushBackend):
         return []
 
 
+class FirebaseCloudMessagingBackend(PushBackend):
+    """Real push via Firebase Cloud Messaging.
+
+    Needs FCM_CREDENTIALS_PATH (a service-account JSON downloaded from
+    Firebase Console → Project Settings → Service Accounts → Generate new
+    private key) set in settings/.env. The app is created lazily and once,
+    since initializing it twice raises.
+    """
+
+    _app = None
+
+    @classmethod
+    def _get_app(cls):
+        import firebase_admin
+        from firebase_admin import credentials
+
+        if cls._app is None:
+            cred = credentials.Certificate(settings.FCM_CREDENTIALS_PATH)
+            cls._app = firebase_admin.initialize_app(cred)
+        return cls._app
+
+    def send(self, tokens, title, body, data):
+        from firebase_admin import messaging
+        from firebase_admin.exceptions import FirebaseError
+
+        app = self._get_app()
+        # FCM data payloads must be flat string -> string maps.
+        str_data = {k: str(v) for k, v in data.items()}
+
+        invalid = []
+        for token in tokens:
+            message = messaging.Message(
+                token=token,
+                notification=messaging.Notification(title=title, body=body),
+                data=str_data,
+                android=messaging.AndroidConfig(priority='high'),
+            )
+            try:
+                messaging.send(message, app=app)
+            except messaging.UnregisteredError:
+                invalid.append(token)
+            except FirebaseError:
+                logger.exception('FCM send failed for one device token.')
+        return invalid
+
+
 def get_backend() -> PushBackend:
     path = getattr(settings, 'PUSH_BACKEND', 'accounts.push.LoggingPushBackend')
     return import_string(path)()

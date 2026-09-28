@@ -278,6 +278,19 @@ LOGGING = {
 }
 
 # ─── Push notifications ──────────────────────────────────────────────────────
-# Dotted path of a class in the style of accounts.push.PushBackend. The default
-# only logs, so nothing is sent until a real backend (e.g. Firebase) is added.
-PUSH_BACKEND = config('PUSH_BACKEND', default='accounts.push.LoggingPushBackend')
+# Path to the Firebase service-account JSON (Firebase Console -> Project
+# Settings -> Service Accounts -> Generate new private key). Keep this file
+# off the repo and outside MEDIA_ROOT/STATIC_ROOT; it's a secret.
+FCM_CREDENTIALS_PATH = config('FCM_CREDENTIALS_PATH', default='')
+
+# Dotted path of a class in the style of accounts.push.PushBackend. Defaults
+# to the real Firebase sender once FCM_CREDENTIALS_PATH is set, else falls
+# back to logging only (nothing sent). Set PUSH_BACKEND explicitly to override
+# either way.
+PUSH_BACKEND = config(
+    'PUSH_BACKEND',
+    default=(
+        'accounts.push.FirebaseCloudMessagingBackend' if FCM_CREDENTIALS_PATH
+        else 'accounts.push.LoggingPushBackend'
+    ),
+)

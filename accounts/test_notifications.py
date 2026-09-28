@@ -452,3 +452,50 @@ class PushDelivery(NotificationTestCase):
             with self.captureOnCommitCallbacks(execute=True):
                 notify(self.customer, 'payment', 'logged only')
         self.assertEqual(RecordingBackend.calls, [])
+
+
+class FirebaseBackendTests(APITestCase):
+    """Unit tests for FirebaseCloudMessagingBackend.send() itself — the
+    RecordingBackend tests above cover the generic push.dispatch() plumbing,
+    but not this backend's own FCM-SDK-to-return-value mapping."""
+
+    def _backend(self):
+        backend = push.FirebaseCloudMessagingBackend()
+        # Skip real Firebase app init (needs real service-account credentials).
+        backend._get_app = lambda: None
+        return backend
+
+    def test_data_values_are_stringified_for_fcm(self):
+        from firebase_admin import messaging
+
+        backend = self._backend()
+        with mock.patch.object(messaging, 'send') as send:
+            invalid = backend.send(['tok1'], 'Title', 'Body', {'ref_id': 7, 'kind': 'payment'})
+        self.assertEqual(invalid, [])
+        sent_message = send.call_args[0][0]
+        self.assertEqual(sent_message.data, {'ref_id': '7', 'kind': 'payment'})
+        self.assertEqual(sent_message.token, 'tok1')
+
+    def test_unregistered_tokens_are_reported_invalid_others_still_sent(self):
+        from firebase_admin import messaging
+
+        backend = self._backend()
+
+        def fake_send(message, app=None):
+            if message.token == 'dead':
+                raise messaging.UnregisteredError('gone')
+            return 'ok'
+
+        with mock.patch.object(messaging, 'send', side_effect=fake_send) as send:
+            invalid = backend.send(['dead', 'alive'], 'Title', 'Body', {})
+        self.assertEqual(invalid, ['dead'])
+        self.assertEqual(send.call_count, 2)
+
+    def test_other_firebase_errors_do_not_mark_the_token_invalid_or_raise(self):
+        from firebase_admin import messaging
+        from firebase_admin.exceptions import InternalError
+
+        backend = self._backend()
+        with mock.patch.object(messaging, 'send', side_effect=InternalError('down')):
+            invalid = backend.send(['tok1'], 'Title', 'Body', {})
+        self.assertEqual(invalid, [])

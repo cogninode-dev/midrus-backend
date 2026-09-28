@@ -19,6 +19,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
+    'storages',
     'accounts',
 ]
 
@@ -173,17 +174,50 @@ USE_TZ = True
 # ─── Static & media files ────────────────────────────────────────────────────
 STATIC_URL  = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-STORAGES = {
-    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
-    # Compressed but not manifest-hashed, so a missed `collectstatic` degrades
-    # gracefully instead of turning every admin page into a 500.
-    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedStaticFilesStorage'},
-}
+
+# Client-uploaded documents and generated invoice PDFs live in Cloudflare R2
+# (an S3-compatible bucket) rather than on local disk, so they survive
+# deploys/restarts and don't fill up the app server. Falls back to local
+# FileSystemStorage when R2 isn't configured (e.g. running tests locally).
+R2_BUCKET_NAME       = config('R2_BUCKET_NAME', default='')
+R2_ACCESS_KEY_ID     = config('R2_ACCESS_KEY_ID', default='')
+R2_SECRET_ACCESS_KEY = config('R2_SECRET_ACCESS_KEY', default='')
+R2_ACCOUNT_ID        = config('R2_ACCOUNT_ID', default='')
+R2_ENDPOINT_URL      = config(
+    'R2_ENDPOINT_URL',
+    default=f'https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com' if R2_ACCOUNT_ID else '',
+)
+USE_R2_STORAGE = bool(R2_BUCKET_NAME and R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY and R2_ENDPOINT_URL)
+
+if USE_R2_STORAGE:
+    STORAGES = {
+        'default': {'BACKEND': 'storages.backends.s3.S3Storage'},
+        'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedStaticFilesStorage'},
+    }
+    AWS_ACCESS_KEY_ID        = R2_ACCESS_KEY_ID
+    AWS_SECRET_ACCESS_KEY    = R2_SECRET_ACCESS_KEY
+    AWS_STORAGE_BUCKET_NAME  = R2_BUCKET_NAME
+    AWS_S3_ENDPOINT_URL      = R2_ENDPOINT_URL
+    AWS_S3_REGION_NAME       = 'auto'
+    AWS_S3_ADDRESSING_STYLE  = 'path'
+    AWS_S3_SIGNATURE_VERSION = 's3v4'
+    AWS_DEFAULT_ACL          = None  # R2 has no ACL concept; the bucket is private by default
+    AWS_QUERYSTRING_AUTH     = False  # files are never linked to directly (see accounts/files.py)
+    AWS_S3_FILE_OVERWRITE    = False
+    AWS_S3_VERIFY            = True
+else:
+    STORAGES = {
+        'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+        # Compressed but not manifest-hashed, so a missed `collectstatic` degrades
+        # gracefully instead of turning every admin page into a 500.
+        'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedStaticFilesStorage'},
+    }
 
 MEDIA_URL  = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
-# Client documents are private. Do NOT expose /media/ through nginx; files are
-# delivered via signed links (see accounts/files.py) that expire after this.
+# Client documents are private. Do NOT expose /media/ (or the R2 bucket)
+# directly; files are delivered via signed links (see accounts/files.py) that
+# expire after this.
 FILE_URL_TTL_SECONDS = config('FILE_URL_TTL_SECONDS', default=3600, cast=int)
 
 # ─── Legal ───────────────────────────────────────────────────────────────────

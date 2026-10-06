@@ -22,6 +22,11 @@ def delete_document_file(sender, instance, **kwargs):
     _delete_file_after_commit(instance.file)
 
 
+@receiver(post_delete, sender=User)
+def delete_user_photo(sender, instance, **kwargs):
+    _delete_file_after_commit(instance.photo)
+
+
 @receiver(post_delete, sender=Invoice)
 def delete_invoice_pdf(sender, instance, **kwargs):
     _delete_file_after_commit(instance.uploaded_pdf)

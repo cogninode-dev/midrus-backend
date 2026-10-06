@@ -9,6 +9,9 @@ import datetime
 import logging
 from decimal import Decimal, InvalidOperation
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.validators import validate_email
+from django.db import transaction
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from rest_framework import status
@@ -17,11 +20,12 @@ from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 
 from .emails import send_approved_email, send_invoice_email
-from .files import make_file_url
+from .files import clean_filename, make_file_url, validate_upload
 from .notifications import notify_invoice_created
 from .models import (
     ContactMessage, Invoice, InvoiceItem, Service, ServiceDocument, User,
 )
+from .security import get_user_by_email
 from .serializers import BillingInvoiceSerializer
 
 logger = logging.getLogger(__name__)
@@ -66,9 +70,12 @@ def _user_row(u, request=None):
         'company': u.company,
         'phone': u.phone,
         'address': u.address,
+        'website': u.website,
+        'tax_id': u.tax_id,
         'gst_number': u.gst_number,
         'photo_url': make_file_url(request, 'avatar', u.pk) if u.photo else None,
         'is_approved': u.is_approved,
+        'is_active': u.is_active,
         'is_staff': u.is_staff,
         'is_email_verified': u.is_email_verified,
         'services_count': getattr(u, 'services_count', None),
@@ -148,9 +155,75 @@ def overview(request):
 
 # ─── users ───────────────────────────────────────────────────────────────────
 
-@api_view(['GET'])
+CLIENT_TEXT_FIELDS = {
+    'name': 150, 'phone': 20, 'company': 150, 'address': 2000,
+    'website': 200, 'tax_id': 50, 'gst_number': 50,
+}
+
+
+def _clean_client_fields(data, *, require_name):
+    """Validated profile fields from a request, or an error string."""
+    out = {}
+    for field, limit in CLIENT_TEXT_FIELDS.items():
+        if field not in data:
+            continue
+        value = ' '.join(str(data[field] or '').split()) if field != 'address' else str(data[field] or '').strip()
+        if len(value) > limit:
+            return None, f'{field.replace("_", " ").capitalize()} is too long (max {limit} characters).'
+        out[field] = value
+    if require_name and not out.get('name'):
+        return None, 'Name is required.'
+    if 'name' in out and not out['name']:
+        return None, 'Name cannot be empty.'
+    if out.get('website') and not out['website'].lower().startswith(('http://', 'https://')):
+        out['website'] = 'https://' + out['website']
+    return out, None
+
+
+def _staff_target(pk):
+    """A client account the app may change. Staff accounts are managed in the
+    web admin only, so a phone can never edit or delete another admin."""
+    return get_object_or_404(User, pk=pk, is_staff=False, is_superuser=False)
+
+
+def _create_user(request):
+    data = request.data
+    email = str(data.get('email') or '').strip().lower()
+    try:
+        validate_email(email)
+    except DjangoValidationError:
+        return _err('Enter a valid email address.')
+    if get_user_by_email(email) is not None:
+        return _err('An account with this email already exists.')
+    password = data.get('password')
+    if not isinstance(password, str) or len(password) < 6:
+        return _err('Password must be at least 6 characters.')
+    fields, problem = _clean_client_fields(data, require_name=True)
+    if problem:
+        return _err(problem)
+    approved = data.get('is_approved', True)
+    if not isinstance(approved, bool):
+        return _err('"is_approved" must be true or false.')
+    user = User.objects.create_user(
+        email=email, password=password,
+        is_active=True, is_email_verified=True, is_approved=approved,
+        **fields,
+    )
+    return Response(_user_row(user, request), status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET', 'POST'])
 @permission_classes(STAFF)
 def users(request):
+    if request.method == 'POST':
+        return _create_user(request)
+    if request.GET.get('filter') == 'inactive':
+        # Deactivated clients (so they can be switched back on). Accounts the
+        # customer erased themselves are anonymised and stay hidden.
+        qs = User.objects.filter(is_staff=False, is_active=False).exclude(
+            email__endswith='@deleted.invalid',
+        ).annotate(services_count=Count('services'))
+        return _paginated(request, qs.order_by('-created_at'), lambda u: _user_row(u, request))
     qs = User.objects.filter(is_staff=False, is_active=True).annotate(services_count=Count('services'))
     flt = request.GET.get('filter', 'all')
     if flt == 'pending':
@@ -193,11 +266,62 @@ def user_approval(request, pk):
     return Response(_user_row(user, request))
 
 
-@api_view(['GET'])
+def _update_user(request, pk):
+    user = _staff_target(pk)
+    data = request.data
+    fields, problem = _clean_client_fields(data, require_name=False)
+    if problem:
+        return _err(problem)
+    for field, value in fields.items():
+        setattr(user, field, value)
+    changed = list(fields)
+    if 'is_active' in data:
+        if not isinstance(data['is_active'], bool):
+            return _err('"is_active" must be true or false.')
+        user.is_active = data['is_active']
+        changed.append('is_active')
+    if 'email' in data:
+        email = str(data['email'] or '').strip().lower()
+        try:
+            validate_email(email)
+        except DjangoValidationError:
+            return _err('Enter a valid email address.')
+        other = get_user_by_email(email)
+        if other is not None and other.pk != user.pk:
+            return _err('An account with this email already exists.')
+        user.email = email
+        changed.append('email')
+    if 'password' in data:
+        password = data['password']
+        if not isinstance(password, str) or len(password) < 6:
+            return _err('Password must be at least 6 characters.')
+        user.set_password(password)
+        changed.append('password')
+    if changed:
+        user.save(update_fields=[*changed, 'updated_at'])
+    return Response(_user_row(user, request))
+
+
+def _delete_user(request, pk):
+    """Permanently removes the client with their services, documents and
+    invoices (what the Django admin does too). Files are cleaned up after the
+    database commit."""
+    user = _staff_target(pk)
+    with transaction.atomic():
+        user.delete()  # post_delete signals remove the photo, documents and PDFs
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['GET', 'PATCH', 'DELETE'])
 @permission_classes(STAFF)
 def user_detail(request, pk):
     """Everything about one client on a single screen: profile, services with
-    their documents, invoices with payment status, and payment totals."""
+    their documents, invoices with payment status, and payment totals. PATCH
+    edits the profile; DELETE removes the client."""
+    if request.method == 'PATCH':
+        return _update_user(request, pk)
+    if request.method == 'DELETE':
+        return _delete_user(request, pk)
     user = get_object_or_404(
         User.objects.annotate(services_count=Count('services', distinct=True)),
         pk=pk, is_staff=False,
@@ -245,9 +369,42 @@ def user_detail(request, pk):
 
 # ─── services ────────────────────────────────────────────────────────────────
 
-@api_view(['GET'])
+def _create_service(request):
+    data = request.data
+    try:
+        client = User.objects.filter(pk=int(data.get('client_id')), is_staff=False).first()
+    except (TypeError, ValueError):
+        client = None
+    if client is None:
+        return _err('Choose a client for this service.')
+    name = str(data.get('name') or '').strip()
+    if not name or len(name) > 200:
+        return _err('Name is required (max 200 characters).')
+    charge = str(data.get('charge') or '').strip()
+    if len(charge) > 50:
+        return _err('Charge is too long (max 50 characters).')
+    allowed = {c[0] for c in Service.STATUS_CHOICES}
+    state = data.get('status', 'Active')
+    if state not in allowed:
+        return _err(f'Status must be one of: {", ".join(sorted(allowed))}.')
+    due = None
+    if data.get('due_date') not in (None, ''):
+        try:
+            due = datetime.date.fromisoformat(str(data['due_date']))
+        except ValueError:
+            return _err('Due date must be YYYY-MM-DD.')
+    service = Service.objects.create(
+        user=client, name=name, charge=charge, status=state, due_date=due,
+        description=str(data.get('description') or '').strip(),
+    )
+    return Response(_service_row(service), status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET', 'POST'])
 @permission_classes(STAFF)
 def services(request):
+    if request.method == 'POST':
+        return _create_service(request)
     qs = Service.objects.select_related('user')
     st = request.GET.get('status', '')
     if st:
@@ -264,10 +421,13 @@ def services(request):
     return _paginated(request, qs.order_by('-created_at'), _service_row)
 
 
-@api_view(['PATCH'])
+@api_view(['PATCH', 'DELETE'])
 @permission_classes(STAFF)
 def service_update(request, pk):
     service = get_object_or_404(Service.objects.select_related('user'), pk=pk)
+    if request.method == 'DELETE':
+        service.delete()  # its documents go with it; files are removed after commit
+        return Response(status=status.HTTP_204_NO_CONTENT)
     data = request.data
     allowed = {c[0] for c in Service.STATUS_CHOICES}
 
@@ -302,9 +462,33 @@ def service_update(request, pk):
 
 # ─── documents ───────────────────────────────────────────────────────────────
 
-@api_view(['GET'])
+def _upload_document(request):
+    try:
+        service = Service.objects.select_related('user').filter(
+            pk=int(request.data.get('service_id')),
+        ).first()
+    except (TypeError, ValueError):
+        service = None
+    if service is None:
+        return _err('Choose a service for this document.')
+    uploaded = request.FILES.get('file')
+    if uploaded is None:
+        return _err('file is required.')
+    problem = validate_upload(uploaded)
+    if problem:
+        return _err(problem)
+    name = clean_filename(uploaded.name)
+    if not name:
+        return _err('file is required.')
+    doc = ServiceDocument.objects.create(service=service, file_name=name, file=uploaded)
+    return Response(_document_row(doc, request), status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET', 'POST'])
 @permission_classes(STAFF)
 def documents(request):
+    if request.method == 'POST':
+        return _upload_document(request)
     qs = ServiceDocument.objects.select_related('service', 'service__user')
     flt = request.GET.get('filter', 'all')
     if flt == 'pending':
@@ -322,6 +506,13 @@ def documents(request):
             | Q(service__user__email__icontains=q) | Q(service__user__name__icontains=q),
         )
     return _paginated(request, qs.order_by('-uploaded_at'), lambda d: _document_row(d, request))
+
+
+@api_view(['DELETE'])
+@permission_classes(STAFF)
+def document_delete(request, pk):
+    get_object_or_404(ServiceDocument, pk=pk).delete()  # file removed after commit
+    return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 def _document_action(request, pk, **fields):
@@ -366,10 +557,13 @@ def messages(request):
     return _paginated(request, qs.order_by('-submitted_at'), _message_row)
 
 
-@api_view(['PATCH'])
+@api_view(['PATCH', 'DELETE'])
 @permission_classes(STAFF)
 def message_update(request, pk):
     msg = get_object_or_404(ContactMessage, pk=pk)
+    if request.method == 'DELETE':
+        msg.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
     is_read = request.data.get('is_read')
     if not isinstance(is_read, bool):
         return _err('"is_read" must be true or false.')
@@ -442,6 +636,114 @@ def _dec(value, field, minimum=Decimal('0')):
     return d
 
 
+def _parse_invoice_items(raw_items):
+    """Validated InvoiceItem objects (unsaved) from request data, or an error."""
+    if not isinstance(raw_items, list) or not raw_items:
+        return None, 'Add at least one service line.'
+    if len(raw_items) > 50:
+        return None, 'An invoice can have at most 50 lines.'
+
+    items = []
+    for idx, raw in enumerate(raw_items, start=1):
+        label = f'Line {idx}'
+        if not isinstance(raw, dict):
+            return None, f'{label} is invalid.'
+        name = str(raw.get('service_name', '')).strip()
+        if not name:
+            return None, f'{label}: service name is required.'
+        if len(name) > 200:
+            return None, f'{label}: service name is too long (max 200).'
+        try:
+            month = int(raw.get('month'))
+            year = int(raw.get('year'))
+        except (TypeError, ValueError):
+            return None, f'{label}: month and year are required.'
+        if not 1 <= month <= 12:
+            return None, f'{label}: month must be between 1 and 12.'
+        if not 2000 <= year <= 2100:
+            return None, f'{label}: year must be between 2000 and 2100.'
+        try:
+            amount = _dec(raw.get('amount'), f'{label}: amount')
+            quantity = _dec(raw.get('quantity', 1), f'{label}: quantity')
+        except ValueError as exc:
+            return None, str(exc)
+        if amount >= Decimal('10') ** 10:
+            return None, f'{label}: amount is too large.'
+        item = InvoiceItem(
+            service_name=name, month=month, year=year,
+            hsn_code=str(raw.get('hsn_code') or '998311').strip()[:20],
+            quantity=quantity,
+            per=str(raw.get('per') or 'Month').strip()[:20],
+            amount=amount,
+        )
+        # Editing: a line that names an existing id is updated in place, and
+        # keeps its quantity / unit unless the request sets them.
+        item.existing_id = raw.get('id') if isinstance(raw.get('id'), int) else None
+        item.sets_quantity = 'quantity' in raw
+        item.sets_per = 'per' in raw
+        items.append(item)
+    return items, None
+
+
+@api_view(['GET', 'PATCH', 'DELETE'])
+@permission_classes(STAFF)
+def invoice_detail(request, pk):
+    # No prefetch: an edit changes the lines and then re-totals them, which
+    # must read the rows as they are now, not a cached copy.
+    invoice = get_object_or_404(Invoice.objects.select_related('user'), pk=pk)
+    if request.method == 'GET':
+        return Response(_invoice_json(invoice, request))
+    if request.method == 'DELETE':
+        invoice.delete()  # its items go with it; an uploaded PDF is removed after commit
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    data = request.data
+    changed = []
+    if 'gst_rate' in data:
+        valid_gst = {c[0] for c in Invoice.GST_CHOICES}
+        if data['gst_rate'] not in valid_gst:
+            return _err(f'GST rate must be one of: {", ".join(str(g) for g in sorted(valid_gst))}.')
+        invoice.gst_rate = data['gst_rate']
+        changed.append('gst_rate')
+    for field in ('ship_to', 'bill_to', 'notes'):
+        if field in data:
+            setattr(invoice, field, str(data[field] or '').strip())
+            changed.append(field)
+    items = None
+    if 'items' in data:
+        items, problem = _parse_invoice_items(data['items'])
+        if problem:
+            return _err(problem)
+    with transaction.atomic():
+        if items is not None:
+            current = {i.pk: i for i in invoice.items.all()}
+            keep, new = set(), []
+            for item in items:
+                existing = current.get(item.existing_id)
+                if existing is None or existing.pk in keep:
+                    item.invoice = invoice
+                    new.append(item)
+                    continue
+                keep.add(existing.pk)
+                existing.service_name, existing.month = item.service_name, item.month
+                existing.year, existing.amount = item.year, item.amount
+                existing.hsn_code = item.hsn_code
+                fields = ['service_name', 'month', 'year', 'amount', 'hsn_code']
+                if item.sets_quantity:
+                    existing.quantity = item.quantity
+                    fields.append('quantity')
+                if item.sets_per:
+                    existing.per = item.per
+                    fields.append('per')
+                existing.save(update_fields=fields)
+            invoice.items.exclude(pk__in=keep).delete()
+            InvoiceItem.objects.bulk_create(new)
+        invoice.recalculate()
+        invoice.save(update_fields=[*changed, 'subtotal', 'gst_amount', 'total'])
+    invoice = Invoice.objects.select_related('user').prefetch_related('items').get(pk=invoice.pk)
+    return Response(_invoice_json(invoice, request))
+
+
 def _invoice_create(request):
     data = request.data
     try:
@@ -456,45 +758,9 @@ def _invoice_create(request):
     if gst_rate not in valid_gst:
         return _err(f'GST rate must be one of: {", ".join(str(g) for g in sorted(valid_gst))}.')
 
-    raw_items = data.get('items')
-    if not isinstance(raw_items, list) or not raw_items:
-        return _err('Add at least one service line.')
-    if len(raw_items) > 50:
-        return _err('An invoice can have at most 50 lines.')
-
-    items = []
-    for idx, raw in enumerate(raw_items, start=1):
-        label = f'Line {idx}'
-        if not isinstance(raw, dict):
-            return _err(f'{label} is invalid.')
-        name = str(raw.get('service_name', '')).strip()
-        if not name:
-            return _err(f'{label}: service name is required.')
-        if len(name) > 200:
-            return _err(f'{label}: service name is too long (max 200).')
-        try:
-            month = int(raw.get('month'))
-            year = int(raw.get('year'))
-        except (TypeError, ValueError):
-            return _err(f'{label}: month and year are required.')
-        if not 1 <= month <= 12:
-            return _err(f'{label}: month must be between 1 and 12.')
-        if not 2000 <= year <= 2100:
-            return _err(f'{label}: year must be between 2000 and 2100.')
-        try:
-            amount = _dec(raw.get('amount'), f'{label}: amount')
-            quantity = _dec(raw.get('quantity', 1), f'{label}: quantity')
-        except ValueError as exc:
-            return _err(str(exc))
-        if amount >= Decimal('10') ** 10:
-            return _err(f'{label}: amount is too large.')
-        items.append(InvoiceItem(
-            service_name=name, month=month, year=year,
-            hsn_code=str(raw.get('hsn_code') or '998311').strip()[:20],
-            quantity=quantity,
-            per=str(raw.get('per') or 'Month').strip()[:20],
-            amount=amount,
-        ))
+    items, problem = _parse_invoice_items(data.get('items'))
+    if problem:
+        return _err(problem)
 
     address = _format_address(user)
     invoice = Invoice.objects.create(

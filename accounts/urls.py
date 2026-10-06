@@ -48,12 +48,14 @@ urlpatterns = [
     path('admin/services/',                    admin_api.services,               name='admin-services'),
     path('admin/services/<int:pk>/',           admin_api.service_update,         name='admin-service-update'),
     path('admin/documents/',                   admin_api.documents,              name='admin-documents'),
+    path('admin/documents/<int:pk>/',          admin_api.document_delete,        name='admin-document-delete'),
     path('admin/documents/<int:pk>/reject/',   admin_api.document_reject,        name='admin-document-reject'),
     path('admin/documents/<int:pk>/restore/',  admin_api.document_restore,       name='admin-document-restore'),
     path('admin/documents/<int:pk>/downloaded/', admin_api.document_mark_downloaded, name='admin-document-downloaded'),
     path('admin/messages/',                    admin_api.messages,               name='admin-messages'),
     path('admin/messages/<int:pk>/',           admin_api.message_update,         name='admin-message-update'),
     path('admin/invoices/',                    admin_api.invoices,               name='admin-invoices'),
+    path('admin/invoices/<int:pk>/',           admin_api.invoice_detail,         name='admin-invoice-detail'),
     path('admin/invoices/<int:pk>/payment-status/', admin_api.invoice_payment_status, name='admin-invoice-payment-status'),
 
     # Notifications (the signed-in customer's own) and push device registration

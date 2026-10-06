@@ -10,7 +10,7 @@ from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.utils.html import escape as esc
 
-SUPPORT_EMAIL = 'info@midrusindia.com'
+SUPPORT_EMAIL = 'contact@midrus.tech'
 
 # Palette (mirrors the mobile app).
 BRAND = '#5B45E0'

@@ -1,0 +1,33 @@
+{% extends "admin/login.html" %}
+
+{% block content %}
+<div id="content-main">
+  <p style="margin:0 0 12px;">Enter the 6-digit code we sent to <strong>{{ masked_email }}</strong>. It expires in 10 minutes.</p>
+  {% if error %}<p class="errornote">{{ error }}</p>{% endif %}
+  {% if info %}<p style="color:#2e7d32;margin:0 0 12px;">{{ info }}</p>{% endif %}
+
+  <form action="{{ app_path }}" method="post" id="otp-form">{% csrf_token %}
+    <input type="hidden" name="step" value="otp">
+    <input type="hidden" name="next" value="{{ next }}">
+    <div class="form-row">
+      <label for="id_otp" class="required">Sign-in code:</label>
+      <input type="text" name="otp" id="id_otp" inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
+             autocomplete="one-time-code" autofocus required>
+    </div>
+    <div class="submit-row">
+      <input type="submit" value="Verify and log in">
+    </div>
+  </form>
+
+  <div style="display:flex;gap:16px;margin-top:12px;font-size:13px;">
+    <form action="{{ app_path }}" method="post">{% csrf_token %}
+      <input type="hidden" name="step" value="resend"><input type="hidden" name="next" value="{{ next }}">
+      <button type="submit" style="background:none;border:0;padding:0;color:var(--link-fg);cursor:pointer;">Send a new code</button>
+    </form>
+    <form action="{{ app_path }}" method="post">{% csrf_token %}
+      <input type="hidden" name="step" value="back"><input type="hidden" name="next" value="{{ next }}">
+      <button type="submit" style="background:none;border:0;padding:0;color:var(--link-fg);cursor:pointer;">Use a different account</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

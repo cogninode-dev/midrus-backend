@@ -84,3 +84,50 @@ class ProfilePhotoTests(APITestCase):
     def test_photo_cannot_be_set_through_profile_update(self):
         r = self.client.patch(f'{API}/profile/update/', {'photo_url': 'http://evil'}, format='json')
         self.assertIsNone(r.data['user']['photo_url'])
+
+
+@override_settings(
+    MEDIA_ROOT=tempfile.mkdtemp(),
+    STORAGES={
+        'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+        'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
+    },
+)
+class AdminSeesClientPhotoTests(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            'admin@example.com', 'pw-admin-123', 'Admin',
+            is_staff=True, is_superuser=True, is_email_verified=True, is_approved=True,
+        )
+        self.with_photo = User.objects.create_user(
+            'a@example.com', 'pw-123456', 'Has Photo', is_email_verified=True,
+        )
+        self.with_photo.photo.save('me.png', _photo().file, save=True)
+        self.without = User.objects.create_user(
+            'b@example.com', 'pw-123456', 'No Photo', is_email_verified=True,
+        )
+        self.client.force_authenticate(self.admin)
+
+    def test_client_list_carries_photo_url(self):
+        rows = {r['email']: r for r in self.client.get(f'{API}/admin/users/').data['results']}
+        self.assertTrue(rows['a@example.com']['photo_url'])
+        self.assertIsNone(rows['b@example.com']['photo_url'])
+
+    def test_client_detail_carries_photo_url(self):
+        r = self.client.get(f'{API}/admin/users/{self.with_photo.pk}/')
+        self.assertTrue(r.data['user']['photo_url'])
+        self.assertTrue(r.data['user']['photo_url'].startswith('http'))
+
+    def test_photo_link_from_admin_api_serves_the_image(self):
+        url = self.client.get(f'{API}/admin/users/{self.with_photo.pk}/').data['user']['photo_url']
+        self.client.force_authenticate(None)
+        r = self.client.get(url)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r['Content-Type'], 'image/png')
+
+    def test_django_admin_shows_the_photo(self):
+        self.client.force_login(self.admin)
+        page = self.client.get('/admin/accounts/user/')
+        self.assertContains(page, '/api/auth/files/')
+        change = self.client.get(f'/admin/accounts/user/{self.with_photo.pk}/change/')
+        self.assertContains(change, '<img src="/api/auth/files/')

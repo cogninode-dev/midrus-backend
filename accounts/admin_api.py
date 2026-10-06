@@ -58,7 +58,7 @@ def _err(message, code=status.HTTP_400_BAD_REQUEST):
     return Response({'error': message}, status=code)
 
 
-def _user_row(u):
+def _user_row(u, request=None):
     return {
         'id': u.id,
         'email': u.email,
@@ -67,6 +67,7 @@ def _user_row(u):
         'phone': u.phone,
         'address': u.address,
         'gst_number': u.gst_number,
+        'photo_url': make_file_url(request, 'avatar', u.pk) if u.photo else None,
         'is_approved': u.is_approved,
         'is_staff': u.is_staff,
         'is_email_verified': u.is_email_verified,
@@ -163,7 +164,7 @@ def users(request):
         qs = qs.filter(
             Q(name__icontains=q) | Q(email__icontains=q) | Q(company__icontains=q),
         )
-    return _paginated(request, qs.order_by('-created_at'), _user_row)
+    return _paginated(request, qs.order_by('-created_at'), lambda u: _user_row(u, request))
 
 
 @api_view(['POST'])
@@ -189,7 +190,7 @@ def user_approval(request, pk):
             return _err('Staff accounts cannot have approval revoked.')
         user.is_approved = False
         user.save(update_fields=['is_approved'])
-    return Response(_user_row(user))
+    return Response(_user_row(user, request))
 
 
 @api_view(['GET'])
@@ -228,7 +229,7 @@ def user_detail(request, pk):
         })
 
     return Response({
-        'user': _user_row(user),
+        'user': _user_row(user, request),
         'summary': {
             'invoices_count': len(invoices),
             'billed': money({'pending', 'processing', 'success', 'failed'}),

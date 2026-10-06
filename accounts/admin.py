@@ -14,7 +14,7 @@ from django.utils.html import escape, format_html, mark_safe
 from .models import User, Service, ServiceDocument, ContactMessage, Invoice, InvoiceItem, Notification
 from .emails import send_approved_email, send_invoice_email
 from .notifications import notify_invoice_created
-from .files import safe_file_response
+from .files import make_file_url, safe_file_response
 
 logger = logging.getLogger(__name__)
 
@@ -94,17 +94,17 @@ class ServiceInline(admin.TabularInline):
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
-    list_display    = ['email', 'name', 'company', 'phone', 'approval_status', 'quick_actions', 'created_at']
+    list_display    = ['email', 'photo_thumb', 'name', 'company', 'phone', 'approval_status', 'quick_actions', 'created_at']
     list_filter     = ['is_approved', 'is_active', 'is_staff', 'created_at']
     search_fields   = ['email', 'name', 'phone', 'company']
     ordering        = ['is_approved', '-created_at']
-    readonly_fields = ['created_at', 'updated_at']
+    readonly_fields = ['photo_preview', 'created_at', 'updated_at']
     inlines         = [ServiceInline]
     actions         = ['approve_users', 'revoke_approval']
 
     fieldsets = (
         ('Login',        {'fields': ('email', 'password')}),
-        ('Personal',     {'fields': ('name', 'phone', 'company', 'address', 'website')}),
+        ('Personal',     {'fields': ('photo_preview', 'name', 'phone', 'company', 'address', 'website')}),
         ('Tax & Legal',  {'fields': ('tax_id', 'gst_number')}),
         ('Permissions',  {'fields': ('is_approved', 'is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions'), 'classes': ('collapse',)}),
         ('Timestamps',   {'fields': ('created_at', 'updated_at'), 'classes': ('collapse',)}),
@@ -119,6 +119,25 @@ class UserAdmin(BaseUserAdmin):
 
     class Media:
         js = ('accounts/js/admin_confirm.js',)
+
+    # ── Customer photo ────────────────────────────────────────────────────────
+
+    def _photo_img(self, obj, size):
+        if not obj.photo:
+            return '—'
+        # Private file: shown through the same expiring signed link the apps use.
+        return format_html(
+            '<img src="{}" alt="" style="width:{}px;height:{}px;border-radius:50%;object-fit:cover">',
+            make_file_url(None, 'avatar', obj.pk), size, size,
+        )
+
+    @admin.display(description='Photo')
+    def photo_thumb(self, obj):
+        return self._photo_img(obj, 36)
+
+    @admin.display(description='Photo')
+    def photo_preview(self, obj):
+        return self._photo_img(obj, 96)
 
     # ── Per-row approve / reject URLs ─────────────────────────────────────────
 

@@ -9,7 +9,7 @@ DEBUG = config('DEBUG', default=False, cast=bool)
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
 
 INSTALLED_APPS = [
-    'django.contrib.admin',
+    'accounts.admin_config.MidrusAdminConfig',  # django.contrib.admin with the OTP sign-in
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
@@ -231,6 +231,9 @@ REQUIRE_TERMS_ACCEPTANCE = config('REQUIRE_TERMS_ACCEPTANCE', default=False, cas
 # ─── One-time codes ──────────────────────────────────────────────────────────
 OTP_TTL_SECONDS  = 600   # a code is valid for 10 minutes
 OTP_MAX_ATTEMPTS = config('OTP_MAX_ATTEMPTS', default=5, cast=int)
+# The web admin panel asks for an emailed code after the password. Only turn
+# this off for local development.
+ADMIN_REQUIRE_OTP = config('ADMIN_REQUIRE_OTP', default=True, cast=bool)
 
 # ─── Email / SMTP ────────────────────────────────────────────────────────────
 EMAIL_BACKEND     = 'django.core.mail.backends.smtp.EmailBackend'

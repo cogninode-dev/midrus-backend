@@ -4,7 +4,8 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 import logging
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
-from .files import clean_filename, validate_upload
+from django.db import transaction
+from .files import clean_filename, validate_photo, validate_upload
 from .security import get_user_by_email, revoke_all_tokens
 
 logger = logging.getLogger(__name__)
@@ -177,17 +178,43 @@ def logout(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def me(request):
-    return Response(UserSerializer(request.user).data)
+    return Response(UserSerializer(request.user, context={'request': request}).data)
 
 
 @api_view(['PUT', 'PATCH'])
 @permission_classes([IsAuthenticated])
 def update_profile(request):
-    s = UserSerializer(request.user, data=request.data, partial=True)
+    s = UserSerializer(request.user, data=request.data, partial=True, context={'request': request})
     if s.is_valid():
         s.save()
         return Response({'message': 'Profile updated.', 'user': s.data})
     return Response(s.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def profile_photo(request):
+    user = request.user
+    old = user.photo
+    old_storage, old_name = (old.storage, old.name) if old else (None, None)
+
+    if request.method == 'POST':
+        uploaded = request.FILES.get('photo')
+        if not uploaded:
+            return Response({'error': 'photo is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        problem = validate_photo(uploaded)
+        if problem:
+            return Response({'error': problem}, status=status.HTTP_400_BAD_REQUEST)
+        uploaded.name = clean_filename(uploaded.name) or 'photo.jpg'
+        user.photo = uploaded
+    else:
+        user.photo = None
+    user.save(update_fields=['photo', 'updated_at'])
+
+    if old_name:
+        transaction.on_commit(lambda: old_storage.delete(old_name))
+    msg = 'Profile photo updated.' if request.method == 'POST' else 'Profile photo removed.'
+    return Response({'message': msg, 'user': UserSerializer(user, context={'request': request}).data})
 
 
 @api_view(['POST'])

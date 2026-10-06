@@ -36,6 +36,10 @@ def erase_user(user: User) -> None:
         EmailOTP.objects.filter(user=user).delete()
         ContactMessage.objects.filter(email__iexact=original_email).delete()
         revoke_all_tokens(user)
+        if user.photo:
+            storage, name = user.photo.storage, user.photo.name
+            transaction.on_commit(lambda: storage.delete(name))
+        user.photo = None
 
         user.email = f'deleted-{user.pk}@deleted.invalid'
         user.name = 'Deleted user'

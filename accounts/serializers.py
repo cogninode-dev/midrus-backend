@@ -114,14 +114,21 @@ class LoginSerializer(serializers.Serializer):
 
 
 class UserSerializer(SingleLineMixin, serializers.ModelSerializer):
+    photo_url = serializers.SerializerMethodField()
+
+    def get_photo_url(self, obj):
+        if not obj.photo:
+            return None
+        return make_file_url(self.context.get('request'), 'avatar', obj.pk)
+
     class Meta:
         model  = User
         fields = [
             'id', 'email', 'name', 'phone', 'company',
-            'address', 'website', 'tax_id', 'gst_number',
+            'address', 'website', 'tax_id', 'gst_number', 'photo_url',
             'is_approved', 'is_staff', 'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'email', 'is_approved', 'is_staff', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'email', 'photo_url', 'is_approved', 'is_staff', 'created_at', 'updated_at']
 
 
 class ChangePasswordSerializer(serializers.Serializer):

@@ -27,6 +27,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     website     = models.URLField(blank=True)
     tax_id      = models.CharField(max_length=50, blank=True)
     gst_number  = models.CharField(max_length=50, blank=True)
+    photo       = models.FileField(upload_to='avatars/%Y/%m/', null=True, blank=True)
     is_active          = models.BooleanField(default=True)
     is_staff           = models.BooleanField(default=False)
     is_email_verified  = models.BooleanField(default=False)

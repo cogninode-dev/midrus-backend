@@ -59,6 +59,8 @@ _INLINE_TYPES = {
 }
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
+MAX_PHOTO_BYTES = 5 * 1024 * 1024  # 5 MB
+_PHOTO_EXTENSIONS = {'.png', '.jpg', '.jpeg'}
 
 # Types a client sends when it doesn't know the file's type (the mobile app's
 # file picker sends application/octet-stream). They claim nothing, so the
@@ -131,6 +133,16 @@ def validate_upload(uploaded_file) -> str | None:
     return None
 
 
+def validate_photo(uploaded_file) -> str | None:
+    """Profile photos must be a real PNG or JPEG of at most 5 MB."""
+    if uploaded_file.size > MAX_PHOTO_BYTES:
+        return 'Photo too large. Maximum size is 5 MB.'
+    ext = os.path.splitext(uploaded_file.name or '')[1].lower()
+    if ext not in _PHOTO_EXTENSIONS:
+        return 'Unsupported photo type. Use a JPG or PNG image.'
+    return validate_upload(uploaded_file)
+
+
 def safe_file_response(fieldfile, filename: str = '', as_attachment: bool | None = None) -> FileResponse:
     """Stream a stored file with headers that neutralise hostile content.
 
@@ -161,7 +173,7 @@ def safe_file_response(fieldfile, filename: str = '', as_attachment: bool | None
 # ─── Signed download links ───────────────────────────────────────────────────
 
 def make_file_url(request, kind: str, pk: int) -> str:
-    """A time-limited absolute URL for a stored file (kind: 'doc' | 'invoice' | 'invoice-pdf')."""
+    """A time-limited absolute URL for a stored file (kind: 'doc' | 'invoice' | 'invoice-pdf' | 'avatar')."""
     token = signing.dumps({'k': kind, 'id': pk}, salt=SIGNING_SALT)
     path = reverse('file-download', args=[token])
     return request.build_absolute_uri(path) if request else path
@@ -213,7 +225,7 @@ class FileThrottle(AnonRateThrottle):
 @permission_classes([AllowAny])
 @throttle_classes([FileThrottle])
 def file_download(request, token):
-    from .models import Invoice, ServiceDocument
+    from .models import Invoice, ServiceDocument, User
 
     try:
         data = signing.loads(
@@ -228,6 +240,10 @@ def file_download(request, token):
     if data.get('k') == 'doc':
         doc = ServiceDocument.objects.filter(pk=data.get('id')).first()
         fieldfile, name = (doc.file, doc.file_name) if doc else (None, '')
+    elif data.get('k') == 'avatar':
+        owner = User.objects.filter(pk=data.get('id')).first()
+        fieldfile = owner.photo if owner else None
+        name = f'photo{os.path.splitext(fieldfile.name)[1]}' if fieldfile else ''
     elif data.get('k') == 'invoice':
         inv = Invoice.objects.filter(pk=data.get('id')).first()
         fieldfile, name = (

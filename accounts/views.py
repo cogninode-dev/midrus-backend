@@ -245,10 +245,10 @@ def service_request(request):
             user=request.user,
             name=s.validated_data['name'],
             description=s.validated_data.get('description', ''),
-            status='Requested',
+            status='Active',
             charge='',
         )
-        return Response({'message': 'Service request submitted. Admin will review and set pricing.'}, status=status.HTTP_201_CREATED)
+        return Response({'message': 'Service activated. Our team will share pricing shortly.'}, status=status.HTTP_201_CREATED)
     return Response(s.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
